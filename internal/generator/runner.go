@@ -5,97 +5,75 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"strconv"
 )
 
-// RunScenario запускает тест.
-// mode: oltp, olap, iot, locks, reporting, mixed, etl, cold
-// intensity: 1 (min) ... 8 (max)
-func RunScenario(mode string, intensityStr string) error {
+// RunBusinessScenario запускает предопределенный бизнес-сценарий нагрузки.
+// Интенсивность (количество клиентов) зашита в каждый сценарий.
+func RunBusinessScenario(scenario string) error {
 	dbUrl := os.Getenv("DATABASE_URL")
-
-	// 1. Парсим уровень интенсивности (1-8)
-	level, err := strconv.Atoi(intensityStr)
-	if err != nil || level < 1 {
-		level = 1 // Default min
-	}
-	if level > 8 {
-		level = 8 // Default max
-	}
-
-	// 2. Определяем базовое количество клиентов (concurrency) для уровня
-	// Шкала: 1, 2, 5, 10, 20, 40, 80, 150
-	baseClients := []int{1, 2, 5, 10, 20, 40, 80, 150}
-	clients := baseClients[level-1]
-	cStr := strconv.Itoa(clients)
-
 	var cmd *exec.Cmd
 
-	switch mode {
-	
-	// 0. INIT
+	log.Printf("[GENERATOR] Starting Business Scenario: %s", scenario)
+
+	switch scenario {
+
+	// 0. INIT (Сброс базы)
 	case "init":
 		cmd = exec.Command("pgbench", "-i", "-s", "50", dbUrl)
 
-	// 1. OLTP (Банк)
+	// 1. OLTP (Банк/Магазин)
+	// Цель: высокая параллельность, короткие транзакции.
 	case "oltp":
-		// Стандартный TPC-B. Растет число клиентов.
-		cmd = exec.Command("pgbench", "-T", "60", "-c", cStr, "-j", "2", dbUrl)
+		cmd = exec.Command("pgbench", "-T", "60", "-c", "50", "-j", "4", dbUrl)
 
-	// 2. OLAP (Аналитика)
+	// 2. OLAP (BI-система)
+	// Цель: несколько тяжелых параллельных запросов.
 	case "olap":
-		// Для OLAP много клиентов = смерть, поэтому берем масштаб поменьше
-		// Шкала для OLAP: 1, 1, 2, 2, 3, 4, 5, 6
-		olapClients := []int{1, 1, 2, 2, 3, 4, 5, 6}
-		ocStr := strconv.Itoa(olapClients[level-1])
-		cmd = exec.Command("pgbench", "-T", "60", "-c", ocStr, "-f", "./scenarios/olap.sql", dbUrl)
+		cmd = exec.Command("pgbench", "-T", "60", "-c", "4", "-j", "2", "-f", "./scenarios/olap.sql", dbUrl)
 
-	// 3. IOT (Запись)
+	// 3. IOT (Write-Heavy)
+	// Цель: постоянный поток вставок от множества датчиков.
 	case "iot":
-		cmd = exec.Command("pgbench", "-T", "60", "-c", cStr, "-f", "./scenarios/iot.sql", dbUrl)
+		cmd = exec.Command("pgbench", "-T", "60", "-c", "20", "-j", "4", "-f", "./scenarios/iot.sql", dbUrl)
 
-	// 4. LOCKS (Конкуренция)
+	// 4. LOCKS (High-Concurrency Конфликт)
+	// Цель: сильная конкуренция, имитация распродажи.
 	case "locks":
-		// Тут важно число клиентов, дерущихся за ресурс. Используем базовую шкалу.
-		cmd = exec.Command("pgbench", "-T", "60", "-c", cStr, "-f", "./scenarios/locks.sql", dbUrl)
+		cmd = exec.Command("pgbench", "-T", "60", "-c", "100", "-j", "8", "-f", "./scenarios/locks.sql", dbUrl)
 
-	// 5. REPORTING (Чтение)
+	// 5. REPORTING (Read-Heavy Отчеты)
+	// Цель: много легких чтений из кэша, загрузка CPU.
 	case "reporting":
-		cmd = exec.Command("pgbench", "-T", "60", "-c", cStr, "-f", "./scenarios/reporting.sql", dbUrl)
+		cmd = exec.Command("pgbench", "-T", "60", "-c", "40", "-j", "4", "-f", "./scenarios/reporting.sql", dbUrl)
 
-	// 6. MIXED / HTAP
+	// 6. MIXED (Гибрид)
+	// Цель: смесь транзакций и аналитики.
 	case "mixed":
-		// Стандартный тест, но пропускаем обновление teller/branch (-N), чтобы снизить локи
-		cmd = exec.Command("pgbench", "-T", "60", "-c", cStr, "-N", dbUrl)
+		cmd = exec.Command("pgbench", "-T", "60", "-c", "25", "-j", "4", "-N", dbUrl)
 
-	// 7. ETL (Массовая)
+	// 7. ETL (Массовая загрузка)
+	// Цель: имитация ночной выгрузки, стресс для WAL.
 	case "etl":
-		// Для ETL нагрузка должна быть выше IoT. Умножаем клиентов на 2.
-		etlClients := clients * 2
-		if etlClients > 200 { etlClients = 200 } // Cap
-		ecStr := strconv.Itoa(etlClients)
-		cmd = exec.Command("pgbench", "-T", "60", "-c", ecStr, "-f", "./scenarios/iot.sql", dbUrl)
+		cmd = exec.Command("pgbench", "-T", "60", "-c", "80", "-j", "8", "-f", "./scenarios/iot.sql", dbUrl)
 
 	// 8. COLD (Архив)
+	// Цель: одна тяжелая операция по обслуживанию.
 	case "cold":
-		// Здесь интенсивность не меняет команду (VACUUM один),
-		// но для галочки оставим запуск.
 		cmd = exec.Command("psql", dbUrl, "-c", "VACUUM FULL pgbench_accounts;")
 
 	default:
-		return fmt.Errorf("unknown mode: %s", mode)
+		return fmt.Errorf("unknown business scenario: %s", scenario)
 	}
 
 	// Настройка вывода
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	log.Printf("[GENERATOR] Starting Mode: %s | Intensity: %d (Clients: %s)", mode, level, cStr)
-	
 	if err := cmd.Run(); err != nil {
+		log.Printf("[GENERATOR] Scenario %s failed: %v", scenario, err)
 		return fmt.Errorf("scenario failed: %w", err)
 	}
-	
-	log.Printf("[GENERATOR] Finished Mode: %s", mode)
+
+	log.Printf("[GENERATOR] Scenario %s finished successfully.", scenario)
 	return nil
 }

@@ -113,8 +113,7 @@ func ClassifyWorkload(m models.WorkloadMetrics) Diagnosis {
 	}
 
 	d.Profile = winner
-	d.Reasoning = fmt.Sprintf("Winner score: %.1f. (IO: %.0f%%, CPU: %.0f%%, Lock: %.0f%%)",
-		maxScore, m.IOPercent, m.CPUPercent, m.LockPercent)
+	d.Reasoning = fmt.Sprintf("IO: %.0f%%, CPU: %.0f%%, Lock: %.0f%%", m.IOPercent, m.CPUPercent, m.LockPercent)
 
 	// Заполняем детали
 	return fillDetails(d)
