@@ -76,3 +76,66 @@ BEGIN
     WHERE d.datname = current_database();
 END;
 $$ LANGUAGE plpgsql;
+
+-- 1. Добавляем колонку для хранения суммы времени выполнения всех запросов
+ALTER TABLE profile_metrics.snapshots 
+ADD COLUMN IF NOT EXISTS total_exec_time FLOAT8;
+
+-- 2. Обновляем функцию создания снэпшота
+-- Теперь она суммирует total_exec_time из pg_stat_statements
+CREATE OR REPLACE FUNCTION profile_metrics.take_snapshot() RETURNS void AS $$
+DECLARE
+    v_total_exec_time float8;
+BEGIN
+    -- Считаем общее время выполнения всех запросов на данный момент
+    SELECT sum(total_exec_time) INTO v_total_exec_time FROM pg_stat_statements;
+
+    INSERT INTO profile_metrics.snapshots (
+        snapshot_time,
+        xact_commit, xact_rollback, blks_read, blks_hit, 
+        tup_returned, tup_fetched, tup_inserted, tup_updated, tup_deleted,
+        buffers_checkpoint, buffers_clean, buffers_backend,
+        total_exec_time -- << Новое поле
+    )
+    SELECT 
+        now(),
+        d.xact_commit, d.xact_rollback, d.blks_read, d.blks_hit,
+        d.tup_returned, d.tup_fetched, d.tup_inserted, d.tup_updated, d.tup_deleted,
+        b.buffers_checkpoint, b.buffers_clean, b.buffers_backend,
+        COALESCE(v_total_exec_time, 0)
+    FROM pg_stat_database d, pg_stat_bgwriter b
+    WHERE d.datname = current_database();
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- 1. Добавляем колонку для хранения суммы времени выполнения всех запросов
+ALTER TABLE profile_metrics.snapshots 
+ADD COLUMN IF NOT EXISTS total_exec_time FLOAT8;
+
+-- 2. Обновляем функцию создания снэпшота
+-- Теперь она суммирует total_exec_time из pg_stat_statements
+CREATE OR REPLACE FUNCTION profile_metrics.take_snapshot() RETURNS void AS $$
+DECLARE
+    v_total_exec_time float8;
+BEGIN
+    -- Считаем общее время выполнения всех запросов на данный момент
+    SELECT sum(total_exec_time) INTO v_total_exec_time FROM pg_stat_statements;
+
+    INSERT INTO profile_metrics.snapshots (
+        snapshot_time,
+        xact_commit, xact_rollback, blks_read, blks_hit, 
+        tup_returned, tup_fetched, tup_inserted, tup_updated, tup_deleted,
+        buffers_checkpoint, buffers_clean, buffers_backend,
+        total_exec_time -- << Новое поле
+    )
+    SELECT 
+        now(),
+        d.xact_commit, d.xact_rollback, d.blks_read, d.blks_hit,
+        d.tup_returned, d.tup_fetched, d.tup_inserted, d.tup_updated, d.tup_deleted,
+        b.buffers_checkpoint, b.buffers_clean, b.buffers_backend,
+        COALESCE(v_total_exec_time, 0)
+    FROM pg_stat_database d, pg_stat_bgwriter b
+    WHERE d.datname = current_database();
+END;
+$$ LANGUAGE plpgsql;
