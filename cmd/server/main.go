@@ -2,25 +2,32 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/joho/godotenv"
-
 	"github.com/lypolix/pg_load_profile/internal/analyzer"
 	"github.com/lypolix/pg_load_profile/internal/collector"
+	"github.com/lypolix/pg_load_profile/internal/generator"
 	"github.com/lypolix/pg_load_profile/internal/models"
 	"github.com/lypolix/pg_load_profile/internal/storage"
-	"github.com/lypolix/pg_load_profile/internal/generator"
 )
 
+type GlobalState struct {
+	mu              sync.RWMutex
+	LatestDiagnosis analyzer.Diagnosis
+	LastUpdate      time.Time
+}
+
+var state GlobalState
+
 func main() {
-	// 1. Загрузка конфига
 	_ = godotenv.Load()
 
-	// 2. Подключение к БД
 	pool, err := storage.ConnectDB()
 	if err != nil {
 		log.Fatalf("Failed to connect to DB: %v", err)
@@ -28,8 +35,6 @@ func main() {
 	defer pool.Close()
 	fmt.Println("Connected to PostgreSQL successfully.")
 
-	// 3. Запуск сборщика метрик (Background Job)
-	// Используем контекст для управления жизненным циклом
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -37,69 +42,110 @@ func main() {
 	coll.Start(ctx)
 	fmt.Println("Collector started. Gathering data...")
 
-	// 4. Запуск анализатора (Периодический вывод статистики в консоль)
+	// Запуск Анализатора (Calculator & Classifier) в отдельной горутине
 	calc := analyzer.NewCalculator(pool)
-	
-	// Цикл анализа каждые 15 секунд
-	ticker := time.NewTicker(15 * time.Second)
-	for range ticker.C {
-		// Анализируем данные за последнюю минуту
-		metrics, err := calc.CalculateMetrics(ctx, 1*time.Minute)
-		if err != nil {
-			log.Printf("Error calculating metrics: %v", err)
-			continue
+
+	go func() {
+		// Анализируем каждые 5 секунд, чтобы интерфейс обновлялся быстро
+		ticker := time.NewTicker(5 * time.Second)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Берем окно данных за последние 30 секунд для реактивности
+				metrics, err := calc.CalculateMetrics(ctx, 30*time.Second)
+				if err != nil {
+					log.Printf("[ERROR] Calculating metrics: %v", err)
+					continue
+				}
+
+				// Классифицируем нагрузку на основе метрик
+				diagnosis := analyzer.ClassifyWorkload(metrics)
+
+				// Сохраняем результат в глобальное состояние (потокобезопасно)
+				state.mu.Lock()
+				state.LatestDiagnosis = diagnosis
+				state.LastUpdate = time.Now()
+				state.mu.Unlock()
+
+				// Дублируем краткий вывод в консоль для удобства разработчика
+				printMetricsToConsole(metrics, diagnosis)
+			}
 		}
-	
-		// Красивый вывод в консоль
-		printMetrics(metrics)
-	}
+	}()
 
-	http.HandleFunc("/run", func(w http.ResponseWriter, r *http.Request) {
-        mode := r.URL.Query().Get("mode") // ?mode=oltp
-        if mode == "" {
-            http.Error(w, "mode is required", http.StatusBadRequest)
-            return
-        }
+	setupHTTPServer()
 
-        // Запускаем в отдельной горутине, чтобы не блокировать ответ
-        go func() {
-            fmt.Printf("Received command to run: %s\n", mode)
-            if err := generator.RunScenario(mode); err != nil {
-                fmt.Printf("Error running scenario: %v\n", err)
-            }
-        }()
-
-        w.WriteHeader(http.StatusOK)
-        w.Write([]byte(fmt.Sprintf("Started scenario: %s. Check logs/metrics.", mode)))
-    })
-
-    // Запускаем HTTP сервер в отдельной горутине
-    go func() {
-        log.Println("HTTP Server started on :8080")
-        if err := http.ListenAndServe(":8080", nil); err != nil {
-            log.Fatal(err)
-        }
-    }()
-	
+	select {}
 }
 
-func printMetrics(m models.WorkloadMetrics) {
-	
-	fmt.Println("------ Workload Profile (Last 1 min) ------")
-	fmt.Printf("DB Time Total (Samples): %.0f\n", m.DBTimeTotal)
-	fmt.Printf("CPU Usage:      %.2f%%\n", m.CPUPercent)
-	fmt.Printf("I/O Wait:       %.2f%%\n", m.IOPercent)
-	fmt.Printf("Lock Wait:      %.2f%%\n", m.LockPercent)
-	fmt.Println("-------------------------------------------")
+func setupHTTPServer() {
+	// Ручка для запуска нагрузки (INPUT)
+	// Пример: GET /run?mode=olap&intensity=8
+	http.HandleFunc("/run", func(w http.ResponseWriter, r *http.Request) {
+		mode := r.URL.Query().Get("mode")
+		intensity := r.URL.Query().Get("intensity")
 
-	if m.IOPercent > 50 {
-		fmt.Println(">> PREDICTION: OLAP / IO-Bound Workload")
-	} else if m.CPUPercent > 80 {
-		fmt.Println(">> PREDICTION: Compute Heavy / OLTP")
-	} else if m.LockPercent > 20 {
-		fmt.Println(">> PREDICTION: High Concurrency / Locked")
-	} else {
-		fmt.Println(">> PREDICTION: Idle or Mixed")
-	}
-	fmt.Println("")
+		if mode == "" {
+			http.Error(w, "Usage: /run?mode=[oltp|olap|iot|...]&intensity=[1-8]", http.StatusBadRequest)
+			return
+		}
+
+		if intensity == "" {
+			intensity = "4" 
+		}
+
+		go func() {
+			fmt.Printf("[GENERATOR] Starting scenario: %s | Intensity: %s\n", mode, intensity)
+			if err := generator.RunScenario(mode, intensity); err != nil {
+				fmt.Printf("[GENERATOR] Error running scenario %s: %v\n", mode, err)
+			} else {
+				fmt.Printf("[GENERATOR] Scenario %s finished successfully.\n", mode)
+			}
+		}()
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(fmt.Sprintf("Started load scenario: %s with intensity %s. Watch logs or check /status in 10-15 seconds.", mode, intensity)))
+	})
+
+	// Ручка для получения результата (OUTPUT)
+	// Пример: GET /status
+	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		state.mu.RLock()
+		defer state.mu.RUnlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		
+		// Формируем ответ с метаданными
+		response := struct {
+			Timestamp time.Time          `json:"timestamp"`
+			Diagnosis analyzer.Diagnosis `json:"diagnosis"`
+		}{
+			Timestamp: state.LastUpdate,
+			Diagnosis: state.LatestDiagnosis,
+		}
+
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			http.Error(w, "Failed to encode JSON", http.StatusInternalServerError)
+		}
+	})
+
+	// Запускаем сервер в отдельной горутине
+	go func() {
+		port := ":8080"
+		log.Printf("HTTP API Server started on port %s", port)
+		if err := http.ListenAndServe(port, nil); err != nil {
+			log.Fatal(err)
+		}
+	}()
+}
+
+func printMetricsToConsole(m models.WorkloadMetrics, d analyzer.Diagnosis) {
+	// Вывод, который вы видите в логах Docker
+	fmt.Println("------ Workload Analysis (Last 30s) ------")
+	fmt.Printf("DB Time: %.1f sec | CPU: %.1f%% | IO: %.1f%% | Lock: %.1f%%\n",
+		m.DBTimeTotal, m.CPUPercent, m.IOPercent, m.LockPercent)
+	fmt.Printf(">> DIAGNOSIS: [%s] (Confidence: %s)\n", d.Profile, d.Confidence)
+	fmt.Println("------------------------------------------")
 }
