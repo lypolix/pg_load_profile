@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # Сервис базы данных PostgreSQL
+  db:
+    image: postgres:15-alpine
+    container_name: postgres_profiler_db
+    # НЕ публикуем порт наружу, т.к. доступ к нему нужен только из другого контейнера
+    # ports:
+    #   - "5432:5432" 
+    environment:
+      - POSTGRES_USER=profiler
+      - POSTGRES_PASSWORD=secret
+      - POSTGRES_DB=testdb
+    volumes:
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./postgres/init:/docker-entrypoint-initdb.d
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    # Healthcheck проверяет, что база данных готова принимать подключения
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U profiler -d testdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Сервис вашего Go-приложения
+  backend:
+    build: . # Указываем Docker собрать образ из текущей директории, используя Dockerfile
+    container_name: go_profiler_backend
+    # depends_on гарантирует, что бэкенд запустится только после того, 
+    # как база данных будет готова (пройдет healthcheck)
+    depends_on:
+      db:
+        condition: service_healthy
+    # Передаем строку подключения через переменную окружения.
+    # Обратите внимание: хост теперь 'db' (имя сервиса), а не 'localhost'.
+    environment:
+      - DATABASE_URL=postgres://profiler:secret@db:5432/testdb
+    restart: on-failure
+
+networks:
+  default:
+    driver: bridge
