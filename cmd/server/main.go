@@ -4,14 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/joho/godotenv"
-	
+
 	"github.com/lypolix/pg_load_profile/internal/analyzer"
 	"github.com/lypolix/pg_load_profile/internal/collector"
-	"github.com/lypolix/pg_load_profile/internal/storage"
 	"github.com/lypolix/pg_load_profile/internal/models"
+	"github.com/lypolix/pg_load_profile/internal/storage"
+	"github.com/lypolix/pg_load_profile/internal/generator"
 )
 
 func main() {
@@ -51,6 +53,33 @@ func main() {
 		// Красивый вывод в консоль
 		printMetrics(metrics)
 	}
+
+	http.HandleFunc("/run", func(w http.ResponseWriter, r *http.Request) {
+        mode := r.URL.Query().Get("mode") // ?mode=oltp
+        if mode == "" {
+            http.Error(w, "mode is required", http.StatusBadRequest)
+            return
+        }
+
+        // Запускаем в отдельной горутине, чтобы не блокировать ответ
+        go func() {
+            fmt.Printf("Received command to run: %s\n", mode)
+            if err := generator.RunScenario(mode); err != nil {
+                fmt.Printf("Error running scenario: %v\n", err)
+            }
+        }()
+
+        w.WriteHeader(http.StatusOK)
+        w.Write([]byte(fmt.Sprintf("Started scenario: %s. Check logs/metrics.", mode)))
+    })
+
+    // Запускаем HTTP сервер в отдельной горутине
+    go func() {
+        log.Println("HTTP Server started on :8080")
+        if err := http.ListenAndServe(":8080", nil); err != nil {
+            log.Fatal(err)
+        }
+    }()
 	
 }
 
