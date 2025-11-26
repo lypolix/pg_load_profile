@@ -10,27 +10,27 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	
-	// Замените на ваш реальный путь
+    
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/lypolix/pg_load_profile/internal/analyzer"
 	"github.com/lypolix/pg_load_profile/internal/collector"
+	"github.com/lypolix/pg_load_profile/internal/configurator"
 	"github.com/lypolix/pg_load_profile/internal/generator"
 	"github.com/lypolix/pg_load_profile/internal/models"
 	"github.com/lypolix/pg_load_profile/internal/storage"
 )
 
-// ScenarioInfo хранит правду о том, что мы запустили
 type ScenarioInfo struct {
-	Mode      string    `json:"mode"`
-	Intensity string    `json:"intensity"`
-	StartTime time.Time `json:"start_time"`
+	LoadScenario string    `json:"load_scenario"` // Какую нагрузку дали (oltp, olap...)
+	ActiveConfig string    `json:"active_config"` // Какой пресет настроек применили
+	StartTime    time.Time `json:"start_time"`
 }
 
 type GlobalState struct {
 	mu              sync.RWMutex
 	LatestDiagnosis analyzer.Diagnosis
 	LastUpdate      time.Time
-	// Новое поле: храним последний запущенный сценарий
 	CurrentScenario *ScenarioInfo
 }
 
@@ -39,6 +39,7 @@ var state GlobalState
 func main() {
 	_ = godotenv.Load()
 
+	// 1. Подключение к БД (возвращает *pgxpool.Pool)
 	pool, err := storage.ConnectDB()
 	if err != nil {
 		log.Fatalf("Failed to connect to DB: %v", err)
@@ -46,6 +47,7 @@ func main() {
 	defer pool.Close()
 	fmt.Println("Connected to PostgreSQL successfully.")
 
+	// 2. Запуск коллектора
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -53,6 +55,7 @@ func main() {
 	coll.Start(ctx)
 	fmt.Println("Collector started. Gathering data...")
 
+	// 3. Запуск анализатора
 	calc := analyzer.NewCalculator(pool)
 
 	go func() {
@@ -80,66 +83,96 @@ func main() {
 		}
 	}()
 
-	setupHTTPServer()
+	// 4. Запуск HTTP сервера (передаем pool)
+	setupHTTPServer(pool)
 	select {}
 }
 
-func setupHTTPServer() {
-	// GET /run?mode=oltp&intensity=8
-	http.HandleFunc("/run", func(w http.ResponseWriter, r *http.Request) {
-		mode := r.URL.Query().Get("mode")
-		intensity := r.URL.Query().Get("intensity")
-
-		if mode == "" {
-			http.Error(w, "Usage: /run?mode=[oltp|olap|...]&intensity=[1-8]", http.StatusBadRequest)
+func setupHTTPServer(pool *pgxpool.Pool) {
+	
+	// Эндпоинт 1: Применение конфигурации БД
+	http.HandleFunc("/config/apply", func(w http.ResponseWriter, r *http.Request) {
+		preset := r.URL.Query().Get("preset")
+		if preset == "" {
+			http.Error(w, "Usage: /config/apply?preset=[oltp|olap|iot...]", http.StatusBadRequest)
 			return
 		}
-		if intensity == "" {
-			intensity = "4"
+
+		// Вызываем Configurator (убедитесь, что он тоже принимает *pgxpool.Pool из v5)
+		if err := configurator.ApplyPreset(pool, preset); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"status": "error",
+				"error":  fmt.Sprintf("Failed to apply preset: %v", err),
+			})
+			return
 		}
 
-		// 1. Сохраняем "Правду" (Ground Truth)
 		state.mu.Lock()
-		state.CurrentScenario = &ScenarioInfo{
-			Mode:      mode,
-			Intensity: intensity,
-			StartTime: time.Now(),
+		if state.CurrentScenario == nil {
+			state.CurrentScenario = &ScenarioInfo{}
 		}
+		state.CurrentScenario.ActiveConfig = preset
 		state.mu.Unlock()
 
-		// 2. Запускаем генератор
+		// Красивый JSON ответ
+		response := map[string]string{
+			"status":      "success",
+			"preset":      preset,
+			"message":     fmt.Sprintf("Successfully applied DB configuration for profile: %s", preset),
+			"description": "PostgreSQL configuration reloaded. Check postgresql.conf changes.",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(response)
+	})
+
+	// Эндпоинт 2: Запуск нагрузки
+	http.HandleFunc("/load/start", func(w http.ResponseWriter, r *http.Request) {
+		scenario := r.URL.Query().Get("scenario")
+		if scenario == "" {
+			http.Error(w, "Usage: /load/start?scenario=[oltp|olap|iot...]", http.StatusBadRequest)
+			return
+		}
+
+		state.mu.Lock()
+		if state.CurrentScenario == nil {
+			state.CurrentScenario = &ScenarioInfo{}
+		}
+		state.CurrentScenario.LoadScenario = scenario
+		state.CurrentScenario.StartTime = time.Now()
+		state.mu.Unlock()
+
 		go func() {
-			fmt.Printf("[GENERATOR] Starting: %s (Intensity %s)\n", mode, intensity)
-			if err := generator.RunScenario(mode, intensity); err != nil {
+			fmt.Printf("[GENERATOR] Starting Business Scenario: %s\n", scenario)
+			if err := generator.RunBusinessScenario(scenario); err != nil {
 				fmt.Printf("[GENERATOR] Error: %v\n", err)
 			} else {
-				fmt.Printf("[GENERATOR] Finished: %s\n", mode)
+				fmt.Printf("[GENERATOR] Finished: %s\n", scenario)
 			}
 		}()
 
-		// Ответ клиенту
 		response := map[string]string{
 			"status":      "started",
-			"mode":        mode,
-			"intensity":   intensity,
-			"description": getDescriptionForMode(mode),
-			"message":     "Check /status to see if AI detects this workload correctly.",
+			"scenario":    scenario,
+			"message":     "Load started.",
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
 	})
 
-	// GET /status
+	// Эндпоинт 3: Статус
 	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		state.mu.RLock()
 		defer state.mu.RUnlock()
 
 		w.Header().Set("Content-Type", "application/json")
 		
-		// Формируем ответ: Диагноз + Правда
 		response := struct {
 			Timestamp       time.Time          `json:"timestamp"`
-			ActiveScenario  *ScenarioInfo      `json:"ground_truth_scenario"` // << Вот оно
+			ActiveScenario  *ScenarioInfo      `json:"ground_truth"` 
 			Diagnosis       analyzer.Diagnosis `json:"diagnosis"`
 		}{
 			Timestamp:      state.LastUpdate,
@@ -153,23 +186,11 @@ func setupHTTPServer() {
 	})
 
 	go func() {
-		log.Println("Server on :8080")
-		http.ListenAndServe(":8080", nil)
+		log.Println("Server running on :8080")
+		if err := http.ListenAndServe(":8080", nil); err != nil {
+			log.Fatal(err)
+		}
 	}()
-}
-
-func getDescriptionForMode(mode string) string {
-	switch mode {
-	case "oltp": return "Transactional (CPU/WAL)"
-	case "olap": return "Analytical (IO/Compute)"
-	case "iot": return "Write-Heavy (WAL)"
-	case "locks": return "High Contention"
-	case "reporting": return "Read-Heavy (Memory)"
-	case "init": return "Initialization"
-	case "etl": return "Bulk Load"
-	case "cold": return "Maintenance"
-	default: return "Unknown"
-	}
 }
 
 func printMetricsToConsole(m models.WorkloadMetrics, d analyzer.Diagnosis) {
