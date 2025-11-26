@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	
+	// Замените на ваш реальный путь
 	"github.com/lypolix/pg_load_profile/internal/analyzer"
 	"github.com/lypolix/pg_load_profile/internal/collector"
 	"github.com/lypolix/pg_load_profile/internal/generator"
@@ -17,10 +19,19 @@ import (
 	"github.com/lypolix/pg_load_profile/internal/storage"
 )
 
+// ScenarioInfo хранит правду о том, что мы запустили
+type ScenarioInfo struct {
+	Mode      string    `json:"mode"`
+	Intensity string    `json:"intensity"`
+	StartTime time.Time `json:"start_time"`
+}
+
 type GlobalState struct {
 	mu              sync.RWMutex
 	LatestDiagnosis analyzer.Diagnosis
 	LastUpdate      time.Time
+	// Новое поле: храним последний запущенный сценарий
+	CurrentScenario *ScenarioInfo
 }
 
 var state GlobalState
@@ -42,88 +53,98 @@ func main() {
 	coll.Start(ctx)
 	fmt.Println("Collector started. Gathering data...")
 
-	// Запуск Анализатора (Calculator & Classifier) в отдельной горутине
 	calc := analyzer.NewCalculator(pool)
 
 	go func() {
-		// Анализируем каждые 5 секунд, чтобы интерфейс обновлялся быстро
 		ticker := time.NewTicker(5 * time.Second)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				// Берем окно данных за последние 30 секунд для реактивности
 				metrics, err := calc.CalculateMetrics(ctx, 30*time.Second)
 				if err != nil {
 					log.Printf("[ERROR] Calculating metrics: %v", err)
 					continue
 				}
 
-				// Классифицируем нагрузку на основе метрик
 				diagnosis := analyzer.ClassifyWorkload(metrics)
 
-				// Сохраняем результат в глобальное состояние (потокобезопасно)
 				state.mu.Lock()
 				state.LatestDiagnosis = diagnosis
 				state.LastUpdate = time.Now()
 				state.mu.Unlock()
 
-				// Дублируем краткий вывод в консоль для удобства разработчика
 				printMetricsToConsole(metrics, diagnosis)
 			}
 		}
 	}()
 
 	setupHTTPServer()
-
 	select {}
 }
 
 func setupHTTPServer() {
-	// Ручка для запуска нагрузки (INPUT)
-	// Пример: GET /run?mode=olap&intensity=8
+	// GET /run?mode=oltp&intensity=8
 	http.HandleFunc("/run", func(w http.ResponseWriter, r *http.Request) {
 		mode := r.URL.Query().Get("mode")
 		intensity := r.URL.Query().Get("intensity")
 
 		if mode == "" {
-			http.Error(w, "Usage: /run?mode=[oltp|olap|iot|...]&intensity=[1-8]", http.StatusBadRequest)
+			http.Error(w, "Usage: /run?mode=[oltp|olap|...]&intensity=[1-8]", http.StatusBadRequest)
 			return
 		}
-
 		if intensity == "" {
-			intensity = "4" 
+			intensity = "4"
 		}
 
+		// 1. Сохраняем "Правду" (Ground Truth)
+		state.mu.Lock()
+		state.CurrentScenario = &ScenarioInfo{
+			Mode:      mode,
+			Intensity: intensity,
+			StartTime: time.Now(),
+		}
+		state.mu.Unlock()
+
+		// 2. Запускаем генератор
 		go func() {
-			fmt.Printf("[GENERATOR] Starting scenario: %s | Intensity: %s\n", mode, intensity)
+			fmt.Printf("[GENERATOR] Starting: %s (Intensity %s)\n", mode, intensity)
 			if err := generator.RunScenario(mode, intensity); err != nil {
-				fmt.Printf("[GENERATOR] Error running scenario %s: %v\n", mode, err)
+				fmt.Printf("[GENERATOR] Error: %v\n", err)
 			} else {
-				fmt.Printf("[GENERATOR] Scenario %s finished successfully.\n", mode)
+				fmt.Printf("[GENERATOR] Finished: %s\n", mode)
 			}
 		}()
 
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(fmt.Sprintf("Started load scenario: %s with intensity %s. Watch logs or check /status in 10-15 seconds.", mode, intensity)))
+		// Ответ клиенту
+		response := map[string]string{
+			"status":      "started",
+			"mode":        mode,
+			"intensity":   intensity,
+			"description": getDescriptionForMode(mode),
+			"message":     "Check /status to see if AI detects this workload correctly.",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
 	})
 
-	// Ручка для получения результата (OUTPUT)
-	// Пример: GET /status
+	// GET /status
 	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		state.mu.RLock()
 		defer state.mu.RUnlock()
 
 		w.Header().Set("Content-Type", "application/json")
 		
-		// Формируем ответ с метаданными
+		// Формируем ответ: Диагноз + Правда
 		response := struct {
-			Timestamp time.Time          `json:"timestamp"`
-			Diagnosis analyzer.Diagnosis `json:"diagnosis"`
+			Timestamp       time.Time          `json:"timestamp"`
+			ActiveScenario  *ScenarioInfo      `json:"ground_truth_scenario"` // << Вот оно
+			Diagnosis       analyzer.Diagnosis `json:"diagnosis"`
 		}{
-			Timestamp: state.LastUpdate,
-			Diagnosis: state.LatestDiagnosis,
+			Timestamp:      state.LastUpdate,
+			ActiveScenario: state.CurrentScenario,
+			Diagnosis:      state.LatestDiagnosis,
 		}
 
 		if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -131,21 +152,26 @@ func setupHTTPServer() {
 		}
 	})
 
-	// Запускаем сервер в отдельной горутине
 	go func() {
-		port := ":8080"
-		log.Printf("HTTP API Server started on port %s", port)
-		if err := http.ListenAndServe(port, nil); err != nil {
-			log.Fatal(err)
-		}
+		log.Println("Server on :8080")
+		http.ListenAndServe(":8080", nil)
 	}()
 }
 
+func getDescriptionForMode(mode string) string {
+	switch mode {
+	case "oltp": return "Transactional (CPU/WAL)"
+	case "olap": return "Analytical (IO/Compute)"
+	case "iot": return "Write-Heavy (WAL)"
+	case "locks": return "High Contention"
+	case "reporting": return "Read-Heavy (Memory)"
+	case "init": return "Initialization"
+	case "etl": return "Bulk Load"
+	case "cold": return "Maintenance"
+	default: return "Unknown"
+	}
+}
+
 func printMetricsToConsole(m models.WorkloadMetrics, d analyzer.Diagnosis) {
-	// Вывод, который вы видите в логах Docker
-	fmt.Println("------ Workload Analysis (Last 30s) ------")
-	fmt.Printf("DB Time: %.1f sec | CPU: %.1f%% | IO: %.1f%% | Lock: %.1f%%\n",
-		m.DBTimeTotal, m.CPUPercent, m.IOPercent, m.LockPercent)
-	fmt.Printf(">> DIAGNOSIS: [%s] (Confidence: %s)\n", d.Profile, d.Confidence)
-	fmt.Println("------------------------------------------")
+	fmt.Printf("[Analyzer] Profile: %s | IO: %.0f%% CPU: %.0f%%\n", d.Profile, m.IOPercent, m.CPUPercent)
 }
