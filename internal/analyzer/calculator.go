@@ -70,8 +70,10 @@ func (c *Calculator) CalculateMetrics(ctx context.Context, duration time.Duratio
 		totalTransactions := deltaCommits + deltaRollbacks
 		if totalTransactions > 0 {
 			m.RollbackRate = (deltaRollbacks / totalTransactions) * 100 // процент
+			m.CommitRatio = (deltaCommits / totalTransactions) * 100    // процент коммитов
 		} else {
 			m.RollbackRate = 0
+			m.CommitRatio = 0
 		}
 		
 		if deltaCalls > 0 {
@@ -178,6 +180,22 @@ func (c *Calculator) CalculateMetrics(ctx context.Context, duration time.Duratio
 	m.CPUPercent = ratioCPU * 100
 	m.IOPercent = ratioIO * 100
 	m.LockPercent = ratioLock * 100
+
+	// Wasted DB Time - процент времени, потраченного на блокировки
+	if m.DBTimeTotal > 0 {
+		m.WastedDBTime = (m.LockTime / m.DBTimeTotal) * 100
+	} else {
+		m.WastedDBTime = 0
+	}
+
+	// Dominate DB Time - доминирующий тип времени (максимум из CPU/IO/Lock)
+	if m.CPUPercent >= m.IOPercent && m.CPUPercent >= m.LockPercent {
+		m.DominateDBTime = m.CPUPercent
+	} else if m.IOPercent >= m.LockPercent {
+		m.DominateDBTime = m.IOPercent
+	} else {
+		m.DominateDBTime = m.LockPercent
+	}
 
 	return m, nil
 }
