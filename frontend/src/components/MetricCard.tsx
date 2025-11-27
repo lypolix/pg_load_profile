@@ -27,7 +27,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   };
 
   return (
-    <div className="bg-[#212020] rounded-[20px] border border-[#312f2f] p-6">
+    <div className="bg-[#212020] rounded-[20px] border border-[#312f2f] p-6 flex-1 flex flex-col justify-between">
       <h3 className="font-['Inter'] font-bold text-white text-lg mb-6">
         {title}
       </h3>

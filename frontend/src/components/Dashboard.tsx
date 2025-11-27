@@ -294,7 +294,7 @@ const Dashboard: React.FC = () => {
       {/* Main Content */}
       <main className="max-w-[1800px] mx-auto px-6 py-6">
         {/* Top Row - Chart, Metrics and Status */}
-        <div className="grid grid-cols-12 gap-4 mb-4">
+        <div className="grid grid-cols-12 gap-4 mb-4 items-stretch">
           {/* DB Time Chart */}
           <div className="col-span-5">
             <DBTimeChart
@@ -307,7 +307,7 @@ const Dashboard: React.FC = () => {
           </div>
 
           {/* Metrics Column */}
-          <div className="col-span-2 flex flex-col gap-4">
+          <div className="col-span-2 flex flex-col gap-4 h-full">
             <MetricCard 
               title="TPS" 
               value={Math.round(metrics?.tps || 0)} 
@@ -315,12 +315,14 @@ const Dashboard: React.FC = () => {
             />
             <MetricCard 
               title="Rollback%" 
-              value={Math.round(metrics?.rollback_rate || 0)} 
+              value={`${Math.round(metrics?.rollback_rate || 0)}%`} 
               variant="default" 
             />
             <MetricCard 
               title="AvgQuery Time" 
-              value={`${Math.round(metrics?.avg_query_latency_ms || 0)}ms`} 
+              value={metrics?.avg_query_latency_ms && metrics.avg_query_latency_ms > 0 
+                ? `${Math.round(metrics.avg_query_latency_ms * 100) / 100}ms` 
+                : '0ms'} 
               variant="default" 
             />
           </div>
