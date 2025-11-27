@@ -5,18 +5,28 @@ import vector6 from "../assets/vector-6.svg";
 import vector7 from "../assets/vector-7.svg";
 import { SimpleLineChart } from "./SimpleLineChart";
 
+interface MetricHistoryPoint {
+  timestamp: number;
+  dbTimeTotal: number;
+  cpuTime: number;
+  ioTime: number;
+  lockTime: number;
+}
+
 interface DBTimeChartProps {
   dbTimeTotal?: number;
   cpuTime?: number;
   ioTime?: number;
   lockTime?: number;
+  history?: MetricHistoryPoint[];
 }
 
 export const DBTimeChart: React.FC<DBTimeChartProps> = ({
-  dbTimeTotal = 73,
+  dbTimeTotal = 0,
   cpuTime = 0,
   ioTime = 0,
   lockTime = 0,
+  history = [],
 }) => {
   const legendItems = [
     { id: 1, icon: vector4, label: "DB total time", color: "#8B5CF6" },
@@ -25,38 +35,53 @@ export const DBTimeChart: React.FC<DBTimeChartProps> = ({
     { id: 4, icon: vector7, label: "Lock time", color: "#F59E0B" },
   ];
 
-  // Mock data for visualization (можно позже заменить на историю из бэкенда)
-  const generateMockHistory = (baseValue: number) => {
-    return Array.from({ length: 11 }, () => ({
-      value: Math.max(0, baseValue + (Math.random() - 0.5) * 20),
-    }));
-  };
-
-  const datasets = [
+  // Используем реальную историю или заглушку
+  const datasets = history.length > 0 ? [
     {
       label: "DB total time",
-      data: generateMockHistory(dbTimeTotal),
+      data: history.map(h => ({ value: h.dbTimeTotal })),
       color: "#8B5CF6",
     },
     {
       label: "CPU time",
-      data: generateMockHistory(cpuTime),
+      data: history.map(h => ({ value: h.cpuTime })),
       color: "#3B82F6",
     },
     {
       label: "IO time",
-      data: generateMockHistory(ioTime),
+      data: history.map(h => ({ value: h.ioTime })),
       color: "#10B981",
     },
     {
       label: "Lock time",
-      data: generateMockHistory(lockTime),
+      data: history.map(h => ({ value: h.lockTime })),
+      color: "#F59E0B",
+    },
+  ] : [
+    {
+      label: "DB total time",
+      data: [{ value: 0 }],
+      color: "#8B5CF6",
+    },
+    {
+      label: "CPU time",
+      data: [{ value: 0 }],
+      color: "#3B82F6",
+    },
+    {
+      label: "IO time",
+      data: [{ value: 0 }],
+      color: "#10B981",
+    },
+    {
+      label: "Lock time",
+      data: [{ value: 0 }],
       color: "#F59E0B",
     },
   ];
 
   return (
-    <div className="w-full h-[500px] flex flex-col bg-[#212020] rounded-[20px] border border-solid border-[#312f2f] p-4">
+    <div className="w-full h-full flex flex-col bg-[#212020] rounded-[20px] border border-solid border-[#312f2f] p-4">
       {/* Header */}
       <div className="flex items-start justify-between mb-4">
         <div>
