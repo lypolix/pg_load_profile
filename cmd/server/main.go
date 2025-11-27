@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-    
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lypolix/pg_load_profile/internal/analyzer"
@@ -39,7 +38,7 @@ var state GlobalState
 func main() {
 	_ = godotenv.Load()
 
-	// 1. Подключение к БД (возвращает *pgxpool.Pool)
+	// 1. Подключение к БД
 	pool, err := storage.ConnectDB()
 	if err != nil {
 		log.Fatalf("Failed to connect to DB: %v", err)
@@ -83,14 +82,17 @@ func main() {
 		}
 	}()
 
-	// 4. Запуск HTTP сервера (передаем pool)
+	// 4. Запуск HTTP сервера
 	setupHTTPServer(pool)
 	select {}
 }
 
 func setupHTTPServer(pool *pgxpool.Pool) {
 	
-	// Эндпоинт 1: Применение конфигурации БД
+	// -------------------------------------------------------------------------
+	// Эндпоинт 1: Применение ПРЕСЕТА конфигурации БД
+	// GET /config/apply?preset=oltp
+	// -------------------------------------------------------------------------
 	http.HandleFunc("/config/apply", func(w http.ResponseWriter, r *http.Request) {
 		preset := r.URL.Query().Get("preset")
 		if preset == "" {
@@ -98,7 +100,6 @@ func setupHTTPServer(pool *pgxpool.Pool) {
 			return
 		}
 
-		// Вызываем Configurator (убедитесь, что он тоже принимает *pgxpool.Pool из v5)
 		if err := configurator.ApplyPreset(pool, preset); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -116,7 +117,6 @@ func setupHTTPServer(pool *pgxpool.Pool) {
 		state.CurrentScenario.ActiveConfig = preset
 		state.mu.Unlock()
 
-		// Красивый JSON ответ
 		response := map[string]string{
 			"status":      "success",
 			"preset":      preset,
@@ -129,7 +129,91 @@ func setupHTTPServer(pool *pgxpool.Pool) {
 		json.NewEncoder(w).Encode(response)
 	})
 
-	// Эндпоинт 2: Запуск нагрузки
+	// -------------------------------------------------------------------------
+	// Эндпоинт 2: Ручное изменение параметров (PATCH)
+	// PATCH /config/custom 
+	// Body: {"work_mem": "64MB"}
+	// -------------------------------------------------------------------------
+	http.HandleFunc("/config/custom", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch && r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed (use PATCH or POST)", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var configMap map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&configMap); err != nil {
+			http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+			return
+		}
+
+		if err := configurator.ApplyCustomConfig(pool, configMap); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"status": "error",
+				"error":  fmt.Sprintf("Failed to apply custom config: %v", err),
+			})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "success",
+			"message": "Custom configuration applied.",
+			"applied_settings": configMap,
+		})
+	})
+
+	// -------------------------------------------------------------------------
+	// Эндпоинт 3: Применение РЕКОМЕНДАЦИЙ AI (POST)
+	// POST /config/apply-recommendations
+	// -------------------------------------------------------------------------
+	http.HandleFunc("/config/apply-recommendations", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed (use POST)", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// 1. Берем текущие рекомендации из стейта
+		state.mu.RLock()
+		recommendations := state.LatestDiagnosis.Tuning
+		profile := state.LatestDiagnosis.Profile
+		state.mu.RUnlock()
+
+		if profile == "" || profile == "IDLE" {
+			http.Error(w, "No active recommendations to apply (System is IDLE or Init)", http.StatusBadRequest)
+			return
+		}
+
+		// 2. Применяем их
+		if err := configurator.ApplyRecommendations(pool, recommendations); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"status": "error",
+				"error":  fmt.Sprintf("Error applying recommendations: %v", err),
+			})
+			return
+		}
+		
+		// 3. Обновляем стейт
+		state.mu.Lock()
+		if state.CurrentScenario == nil { state.CurrentScenario = &ScenarioInfo{} }
+		state.CurrentScenario.ActiveConfig = "AI_RECOMMENDED (" + profile + ")"
+		state.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "success",
+			"message": "Recommendations applied successfully.",
+			"applied_config": recommendations,
+		})
+	})
+
+	// -------------------------------------------------------------------------
+	// Эндпоинт 4: Запуск нагрузки
+	// GET /load/start?scenario=oltp
+	// -------------------------------------------------------------------------
 	http.HandleFunc("/load/start", func(w http.ResponseWriter, r *http.Request) {
 		scenario := r.URL.Query().Get("scenario")
 		if scenario == "" {
@@ -163,7 +247,10 @@ func setupHTTPServer(pool *pgxpool.Pool) {
 		json.NewEncoder(w).Encode(response)
 	})
 
-	// Эндпоинт 3: Статус
+	// -------------------------------------------------------------------------
+	// Эндпоинт 5: Статус (AI Diagnosis)
+	// GET /status
+	// -------------------------------------------------------------------------
 	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		state.mu.RLock()
 		defer state.mu.RUnlock()
@@ -183,6 +270,21 @@ func setupHTTPServer(pool *pgxpool.Pool) {
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			http.Error(w, "Failed to encode JSON", http.StatusInternalServerError)
 		}
+	})
+
+	// -------------------------------------------------------------------------
+	// Эндпоинт 6: Сводная панель (Dashboard)
+	// GET /dashboard
+	// -------------------------------------------------------------------------
+	http.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
+		summary, err := collector.GetSystemSummary(pool)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to get dashboard data: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(summary)
 	})
 
 	go func() {
