@@ -15,6 +15,16 @@
   textarea {
     @apply appearance-none bg-transparent border-0 outline-none;
   }
+
+  /* Скругление для select dropdown */
+  select {
+    border-radius: 12px !important;
+  }
+  
+  select option {
+    border-radius: 8px;
+    padding: 8px;
+  }
   
   /* Hide scrollbar but keep functionality */
   body {

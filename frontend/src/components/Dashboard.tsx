@@ -17,6 +17,9 @@ const Dashboard: React.FC = () => {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isLoadMenuOpen, setIsLoadMenuOpen] = useState(false);
+  const [selectedLoad, setSelectedLoad] = useState("Выбор нагрузки");
 
   const configModes = [
     "OLTP",
@@ -32,9 +35,12 @@ const Dashboard: React.FC = () => {
   const loadScenarios = [
     { value: "oltp", label: "OLTP" },
     { value: "olap", label: "OLAP" },
-    { value: "iot", label: "IoT/Write-heavy" },
-    { value: "locks", label: "High Concurrency" },
+    { value: "iot", label: "Write-heavy" },
+    { value: "locks", label: "High - concurrency" },
     { value: "reporting", label: "Read-heavy" },
+    { value: "mixed", label: "HTAP" },
+    { value: "etl", label: "Bulk ETL" },
+    { value: "cold", label: "Archive-Scan" },
   ];
 
   // Загрузка данных
@@ -60,6 +66,22 @@ const Dashboard: React.FC = () => {
     const interval = setInterval(fetchData, 5000); // Обновление каждые 5 секунд
     return () => clearInterval(interval);
   }, []);
+
+  // Закрытие меню при клике вне его
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (isProfileMenuOpen && !target.closest('.profile-menu-container')) {
+        setIsProfileMenuOpen(false);
+      }
+      if (isLoadMenuOpen && !target.closest('.load-menu-container')) {
+        setIsLoadMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isProfileMenuOpen, isLoadMenuOpen]);
 
   const handleLogout = () => {
     logout();
@@ -108,66 +130,100 @@ const Dashboard: React.FC = () => {
     <div className="min-h-screen w-full bg-[#0d0d0d] overflow-x-hidden">
       {/* Header */}
       <header className="bg-[#1a1a1a]/95 backdrop-blur-sm border-b border-[#312f2f] sticky top-0 z-50">
-        <div className="max-w-[1600px] mx-auto px-6 py-3">
-          <div className="flex items-center justify-between gap-4">
-            {/* Config Presets */}
+        <div className="max-w-[1800px] mx-auto px-6">
+          {/* Top row - Avatar only */}
+          <div className="flex items-center justify-end gap-4 py-3 border-b border-[#2a2a2a]">
+            {/* Avatar with dropdown */}
+            <div className="relative profile-menu-container">
+              <button
+                onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
+                className="w-10 h-10 rounded-full bg-gradient-to-br from-[#10B981] to-[#059669] flex items-center justify-center text-white font-semibold text-sm hover:shadow-[0_0_15px_rgba(16,185,129,0.4)] transition-all"
+              >
+                A
+              </button>
+              
+              {isProfileMenuOpen && (
+                <div className="absolute right-0 top-12 w-48 bg-[#1a1a1a] border border-[#312f2f] rounded-lg shadow-xl overflow-hidden z-50">
+                  <button
+                    className="w-full px-4 py-3 text-left text-white hover:bg-[#2a2a2a] transition-colors flex items-center gap-3"
+                    onClick={() => {
+                      setIsProfileMenuOpen(false);
+                      handleLogout();
+                    }}
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                    Выйти
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Bottom row - Config buttons, load selector and info */}
+          <div className="flex items-center justify-between gap-4 py-4">
+            {/* Left side: Config Presets + Load Scenario */}
             <div className="flex items-center gap-2">
               {configModes.map((mode) => (
                 <button
                   key={mode}
                   onClick={() => handleConfigApply(mode)}
-                  className={`px-4 py-2 rounded-lg text-sm font-['Inter'] transition-all ${
+                  className={`px-4 py-2 rounded-lg text-sm transition-all ${
                     selectedMode === mode
-                      ? "bg-[#10B981] text-white shadow-[0_0_15px_rgba(16,185,129,0.5)]"
-                      : "bg-[#212020] text-[#626262] border border-[#312f2f] hover:border-[#4a4747]"
+                      ? "bg-[#10B981] text-white font-semibold shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+                      : "bg-transparent text-[#8a8a8a] border border-[#3a3a3a] hover:border-[#10B981] hover:text-[#10B981]"
                   }`}
                 >
                   {mode}
                 </button>
               ))}
-            </div>
-
-            {/* Right side */}
-            <div className="flex items-center gap-4">
-              {/* Load Scenario Dropdown */}
-              <div className="relative">
-                <select
-                  onChange={(e) => handleLoadStart(e.target.value)}
-                  className="px-4 py-2 bg-[#212020] text-white rounded-lg border border-[#312f2f] hover:border-[#4a4747] font-['Inter'] text-sm cursor-pointer transition-all appearance-none pr-10"
-                  defaultValue=""
+              
+              {/* Load Scenario Custom Dropdown */}
+              <div className="relative ml-2 load-menu-container">
+                <button
+                  onClick={() => setIsLoadMenuOpen(!isLoadMenuOpen)}
+                  className="px-4 py-2 bg-transparent text-white rounded-xl border border-[#3a3a3a] hover:border-[#10B981] text-sm cursor-pointer transition-all pr-10 min-w-[180px] text-left"
                 >
-                  <option value="" disabled>Выбор нагрузки</option>
-                  {loadScenarios.map((scenario) => (
-                    <option key={scenario.value} value={scenario.value}>
-                      {scenario.label}
-                    </option>
-                  ))}
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[#626262]">
+                  {selectedLoad}
+                </button>
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[#626262] transition-transform" style={{ transform: `translateY(-50%) rotate(${isLoadMenuOpen ? '180deg' : '0deg'})` }}>
                   ▼
                 </div>
+                
+                {isLoadMenuOpen && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-[#1a1a1a] border border-[#312f2f] rounded-xl shadow-xl overflow-hidden z-50">
+                    {loadScenarios.map((scenario) => (
+                      <button
+                        key={scenario.value}
+                        onClick={() => {
+                          setSelectedLoad(scenario.label);
+                          setIsLoadMenuOpen(false);
+                          handleLoadStart(scenario.value);
+                        }}
+                        className="w-full px-4 py-3 text-left text-white hover:bg-[#10B981] hover:text-white transition-colors text-sm"
+                      >
+                        {scenario.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
+            </div>
 
-              <div className="px-4 py-2 bg-[#212020] text-white rounded-lg border border-[#312f2f] font-['Inter'] text-sm">
-                Профиль: <span className="text-[#10B981] font-bold">{profile}</span>
-              </div>
+            {/* Right side: Last update info */}
+            <div className="flex items-center gap-4">
               <div className="text-right">
-                <div className="text-xs text-[#626262] font-['Inter']">
+                <div className="text-xs text-[#626262]">
                   Last update: {statusData?.timestamp ? new Date(statusData.timestamp).toLocaleTimeString() : 'N/A'}
                 </div>
                 <button
                   onClick={fetchData}
-                  className="text-sm text-[#06B6D4] hover:text-[#0891B2] font-['Inter']"
+                  className="text-sm text-[#06B6D4] hover:text-[#0891B2]"
                 >
                   обновить
                 </button>
               </div>
-              <button
-                onClick={handleLogout}
-                className="px-4 py-2 bg-[#212020] text-white rounded-lg border border-[#312f2f] hover:bg-[#2a2929] transition-all font-['Inter'] text-sm"
-              >
-                Выйти
-              </button>
             </div>
           </div>
         </div>
