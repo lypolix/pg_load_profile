@@ -334,44 +334,56 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Bottom Row - Gauges and Quality Chart */}
+        {/* Bottom Row - Gauges and Quality Chart in 2x2 grid */}
         <div className="grid grid-cols-12 gap-4">
-          {/* Gauges */}
-          <div className="col-span-3">
-            <GaugeChart 
-              title="CPU Usage" 
-              value={Math.round(metrics?.cpu_percent || 0)} 
-              status={
-                (metrics?.cpu_percent || 0) > 80 ? "critical" : 
-                (metrics?.cpu_percent || 0) > 50 ? "warning" : "normal"
-              } 
-            />
-          </div>
-          <div className="col-span-3">
-            <GaugeChart 
-              title="IO Usage" 
-              value={Math.round(metrics?.io_percent || 0)} 
-              status={
-                (metrics?.io_percent || 0) > 80 ? "critical" : 
-                (metrics?.io_percent || 0) > 50 ? "warning" : "normal"
-              } 
-            />
-          </div>
-          <div className="col-span-3">
-            <GaugeChart 
-              title="Lock time usage" 
-              value={Math.round(metrics?.lock_percent || 0)} 
-              status={
-                (metrics?.lock_percent || 0) > 15 ? "critical" : 
-                (metrics?.lock_percent || 0) > 5 ? "warning" : "normal"
-              } 
-            />
-          </div>
+          {/* Gauges and Quality Chart - занимают столько же по ширине, сколько большой график + карточки (col-span-7) */}
+          <div className="col-span-7">
+            <div className="grid grid-cols-2 gap-4 h-full">
+              {/* CPU Usage */}
+              <div>
+                <GaugeChart 
+                  title="CPU Usage" 
+                  value={metrics?.cpu_percent || 0} 
+                  status={
+                    (metrics?.cpu_percent || 0) > 80 ? "critical" : 
+                    (metrics?.cpu_percent || 0) > 50 ? "warning" : "normal"
+                  } 
+                />
+              </div>
+              
+              {/* IO Usage */}
+              <div>
+                <GaugeChart 
+                  title="IO Usage" 
+                  value={metrics?.io_percent || 0} 
+                  status={
+                    (metrics?.io_percent || 0) > 80 ? "critical" : 
+                    (metrics?.io_percent || 0) > 50 ? "warning" : "normal"
+                  } 
+                />
+              </div>
+              
+              {/* Lock time usage */}
+              <div>
+                <GaugeChart 
+                  title="Lock time usage" 
+                  value={metrics?.lock_percent || 0} 
+                  status={
+                    (metrics?.lock_percent || 0) > 15 ? "critical" : 
+                    (metrics?.lock_percent || 0) > 5 ? "warning" : "normal"
+                  } 
+                />
+              </div>
 
-          {/* Quality Chart */}
-          <div className="col-span-3">
-            <QualityChart />
+              {/* Quality Chart */}
+              <div>
+                <QualityChart />
+              </div>
+            </div>
           </div>
+          
+          {/* Empty space to match the layout */}
+          <div className="col-span-5"></div>
         </div>
       </main>
     </div>
