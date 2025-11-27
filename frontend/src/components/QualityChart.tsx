@@ -28,7 +28,7 @@ export const QualityChart: React.FC = () => {
   ];
 
   return (
-    <div className="bg-[#212020] rounded-[20px] border border-[#312f2f] p-6 h-[260px]">
+    <div className="bg-[#212020] rounded-[20px] border border-[#312f2f] p-6 h-full flex flex-col">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-['Inter'] font-bold text-white text-lg">
           Database quality
@@ -47,7 +47,7 @@ export const QualityChart: React.FC = () => {
           ))}
         </div>
       </div>
-      <div className="h-[160px]">
+      <div className="flex-1 min-h-[160px]">
         <SimpleLineChart datasets={datasets} width={540} height={150} maxValue={150} />
       </div>
     </div>
