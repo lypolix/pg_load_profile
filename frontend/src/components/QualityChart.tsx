@@ -1,28 +1,48 @@
 import React from "react";
 import { SimpleLineChart } from "./SimpleLineChart";
 
-export const QualityChart: React.FC = () => {
-  const generateData = () => {
-    const points = 5;
-    return Array.from({ length: points }, () => ({
-      value: Math.random() * 40 + 60,
-    }));
-  };
+interface QualityChartProps {
+  history?: Array<{
+    timestamp: number;
+    dbTimeTotal: number;
+    cpuTime: number;
+    ioTime: number;
+    lockTime: number;
+  }>;
+}
 
-  const datasets = [
+export const QualityChart: React.FC<QualityChartProps> = ({ history = [] }) => {
+  // Используем реальную историю или заглушку
+  const datasets = history.length > 0 ? [
     {
       label: "DB total time",
-      data: generateData(),
+      data: history.map(h => ({ value: h.dbTimeTotal })),
       color: "#8B5CF6",
     },
     {
       label: "DB total Committed",
-      data: generateData(),
+      data: history.map(h => ({ value: h.cpuTime })),
       color: "#3B82F6",
     },
     {
+      label: "IO time",
+      data: history.map(h => ({ value: h.ioTime })),
+      color: "#10B981",
+    },
+  ] : [
+    {
       label: "DB total time",
-      data: generateData(),
+      data: [{ value: 0 }],
+      color: "#8B5CF6",
+    },
+    {
+      label: "DB total Committed",
+      data: [{ value: 0 }],
+      color: "#3B82F6",
+    },
+    {
+      label: "IO time",
+      data: [{ value: 0 }],
       color: "#10B981",
     },
   ];
