@@ -20,16 +20,26 @@ const Dashboard: React.FC = () => {
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isLoadMenuOpen, setIsLoadMenuOpen] = useState(false);
   const [selectedLoad, setSelectedLoad] = useState("Выбор нагрузки");
+  const [isInitializing, setIsInitializing] = useState(false);
+  
+  // История метрик для графиков (последние 20 точек)
+  const [metricsHistory, setMetricsHistory] = useState<Array<{
+    timestamp: number;
+    dbTimeTotal: number;
+    cpuTime: number;
+    ioTime: number;
+    lockTime: number;
+  }>>([]);
 
   const configModes = [
-    "OLTP",
-    "OLAP",
-    "Write-heavy",
-    "High - concurrency",
-    "Read-heavy",
-    "HTAP",
-    "Bulk ETL",
-    "Archive-Scan",
+    { label: "OLTP", value: "oltp" },
+    { label: "OLAP", value: "olap" },
+    { label: "Write-heavy", value: "write_heavy" },
+    { label: "High-concurrency", value: "high_concurrency" },
+    { label: "Read-heavy", value: "reporting" },
+    { label: "HTAP", value: "mixed" },
+    { label: "Bulk ETL", value: "etl" },
+    { label: "Archive-Scan", value: "cold" },
   ];
 
   const loadScenarios = [
@@ -53,6 +63,24 @@ const Dashboard: React.FC = () => {
       ]);
       setStatusData(status);
       setDashboardData(dashboard);
+      
+      // Добавляем данные в историю для графика
+      if (status?.diagnosis?.metrics) {
+        const newPoint = {
+          timestamp: Date.now(),
+          dbTimeTotal: status.diagnosis.metrics.db_time_total || 0,
+          cpuTime: status.diagnosis.metrics.cpu_time || 0,
+          ioTime: status.diagnosis.metrics.io_time || 0,
+          lockTime: status.diagnosis.metrics.lock_time || 0,
+        };
+        
+        setMetricsHistory(prev => {
+          const updated = [...prev, newPoint];
+          // Храним только последние 20 точек
+          return updated.slice(-20);
+        });
+      }
+      
       setLoading(false);
     } catch (err) {
       console.error("Error fetching data:", err);
@@ -88,10 +116,10 @@ const Dashboard: React.FC = () => {
     navigate("/login");
   };
 
-  const handleConfigApply = async (preset: string) => {
-    setSelectedMode(preset);
+  const handleConfigApply = async (presetValue: string, presetLabel: string) => {
+    setSelectedMode(presetLabel);
     try {
-      await ApiService.applyPreset(preset.toLowerCase().replace(/\s+/g, "_"));
+      await ApiService.applyPreset(presetValue);
       fetchData();
     } catch (err) {
       console.error("Error applying config:", err);
@@ -104,6 +132,28 @@ const Dashboard: React.FC = () => {
       fetchData();
     } catch (err) {
       console.error("Error starting load:", err);
+    }
+  };
+
+  const handleInitDB = async () => {
+    if (isInitializing) return;
+    
+    const confirmed = window.confirm(
+      "Инициализация базы данных создаст тестовые таблицы pgbench.\n\n" +
+      "Это займет 30-60 секунд. Продолжить?"
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+      setIsInitializing(true);
+      await ApiService.startLoad("init");
+      alert("База данных инициализируется. Подождите 30-60 секунд, затем можете запускать нагрузку.");
+    } catch (err) {
+      console.error("Error initializing DB:", err);
+      alert("Ошибка инициализации базы данных");
+    } finally {
+      setTimeout(() => setIsInitializing(false), 60000); // Разблокировать через минуту
     }
   };
 
@@ -167,15 +217,15 @@ const Dashboard: React.FC = () => {
             <div className="flex items-center gap-2">
               {configModes.map((mode) => (
                 <button
-                  key={mode}
-                  onClick={() => handleConfigApply(mode)}
+                  key={mode.value}
+                  onClick={() => handleConfigApply(mode.value, mode.label)}
                   className={`px-4 py-2 rounded-lg text-sm transition-all ${
-                    selectedMode === mode
+                    selectedMode === mode.label
                       ? "bg-[#10B981] text-white font-semibold shadow-[0_0_15px_rgba(16,185,129,0.3)]"
                       : "bg-transparent text-[#8a8a8a] border border-[#3a3a3a] hover:border-[#10B981] hover:text-[#10B981]"
                   }`}
                 >
-                  {mode}
+                  {mode.label}
                 </button>
               ))}
               
@@ -211,8 +261,20 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* Right side: Last update info */}
+            {/* Right side: Last update info + Init DB button */}
             <div className="flex items-center gap-4">
+              <button
+                onClick={handleInitDB}
+                disabled={isInitializing}
+                className={`px-4 py-2 rounded-lg text-sm border transition-all ${
+                  isInitializing
+                    ? "bg-[#FFA500]/20 text-[#FFA500] border-[#FFA500] cursor-not-allowed opacity-60"
+                    : "bg-[#FFA500]/10 text-[#FFA500] border-[#FFA500] hover:bg-[#FFA500] hover:text-white"
+                }`}
+                title="Инициализация базы данных для тестирования (выполнить один раз)"
+              >
+                {isInitializing ? "Инициализация..." : "Init DB"}
+              </button>
               <div className="text-right">
                 <div className="text-xs text-[#626262]">
                   Last update: {statusData?.timestamp ? new Date(statusData.timestamp).toLocaleTimeString() : 'N/A'}
@@ -240,6 +302,7 @@ const Dashboard: React.FC = () => {
               cpuTime={metrics?.cpu_time || 0}
               ioTime={metrics?.io_time || 0}
               lockTime={metrics?.lock_time || 0}
+              history={metricsHistory}
             />
           </div>
 

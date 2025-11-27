@@ -21,17 +21,42 @@ export const SimpleLineChart: React.FC<SimpleLineChartProps> = ({
   datasets,
   width = 500,
   height = 300,
-  maxValue = 120,
+  maxValue: providedMaxValue,
 }) => {
-  const padding = { top: 20, right: 20, bottom: 30, left: 50 };
+  const padding = { top: 20, right: 20, bottom: 30, left: 60 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
 
   const pointCount = datasets[0]?.data.length || 11;
-  const xStep = chartWidth / (pointCount - 1);
+  const xStep = chartWidth / Math.max(pointCount - 1, 1);
+
+  // Автомасштабирование: находим максимальное значение в данных
+  const dataMax = Math.max(
+    ...datasets.flatMap(d => d.data.map(p => p.value)),
+    0.1 // Минимум 0.1, чтобы избежать деления на 0
+  );
+  
+  // Округляем максимум до красивого числа
+  const getNiceMax = (val: number) => {
+    if (val <= 0) return 10;
+    if (val < 1) return 1;
+    if (val < 5) return 5;
+    if (val < 10) return 10;
+    if (val < 20) return 20;
+    if (val < 50) return 50;
+    if (val < 100) return 100;
+    if (val < 200) return 200;
+    if (val < 500) return 500;
+    if (val < 1000) return 1000;
+    if (val < 2000) return 2000;
+    return Math.ceil(val / 1000) * 1000;
+  };
+  
+  const maxValue = providedMaxValue ?? getNiceMax(dataMax * 1.2);
 
   // Генерация path для каждого dataset
   const generatePath = (data: DataPoint[]) => {
+    if (data.length === 0) return "";
     return data
       .map((point, index) => {
         const x = padding.left + index * xStep;
@@ -41,11 +66,21 @@ export const SimpleLineChart: React.FC<SimpleLineChartProps> = ({
       .join(" ");
   };
 
-  // Y-axis labels
-  const yLabels = [0, 20, 40, 60, 80, 100, 120];
+  // Динамические Y-axis labels
+  const generateYLabels = () => {
+    const labelCount = 7;
+    const step = maxValue / (labelCount - 1);
+    return Array.from({ length: labelCount }, (_, i) => Math.round(i * step));
+  };
+  
+  const yLabels = generateYLabels();
 
   return (
-    <svg width={width} height={height} className="w-full h-full">
+    <svg 
+      viewBox={`0 0 ${width} ${height}`} 
+      className="w-full h-full" 
+      preserveAspectRatio="xMidYMid meet"
+    >
       {/* Grid lines */}
       {yLabels.map((value) => {
         const y = padding.top + chartHeight - (value / maxValue) * chartHeight;
