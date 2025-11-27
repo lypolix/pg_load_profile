@@ -158,4 +158,3 @@ export const GaugeChart: React.FC<GaugeChartProps> = ({
     </div>
   );
 };
-

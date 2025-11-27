@@ -33,6 +33,9 @@ export class MockApiService {
           total_commits: 8745,
           total_rollbacks: 138,
           total_calls: 53580,
+          commit_ratio: 98.4, // (8745 / (8745 + 138)) * 100
+          wasted_db_time: 17, // lock_percent
+          dominate_db_time: 62, // max(cpu_percent, io_percent, lock_percent)
         },
         tuning_recommendations: {
           shared_buffers: "128MB",

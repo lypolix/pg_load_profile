@@ -6,6 +6,7 @@ import { MetricCard } from "./MetricCard";
 import { GaugeChart } from "./GaugeChart";
 import { DatabaseStatus } from "./DatabaseStatus";
 import { QualityChart } from "./QualityChart";
+import { MetricHistoryCard } from "./MetricHistoryCard";
 import { ApiService } from "../services/api";
 import { StatusResponse, DashboardData } from "../types/api";
 
@@ -29,6 +30,13 @@ const Dashboard: React.FC = () => {
     cpuTime: number;
     ioTime: number;
     lockTime: number;
+  }>>([]);
+
+  // История для карточек метрик (последние 5 точек)
+  const [metricsCardsHistory, setMetricsCardsHistory] = useState<Array<{
+    commitRatio: number;
+    wastedDBTime: number;
+    dominateDBTime: number;
   }>>([]);
 
   const configModes = [
@@ -78,6 +86,19 @@ const Dashboard: React.FC = () => {
           const updated = [...prev, newPoint];
           // Храним только последние 20 точек
           return updated.slice(-20);
+        });
+
+        // Добавляем данные в историю для карточек метрик
+        const newCardPoint = {
+          commitRatio: status.diagnosis.metrics.commit_ratio || 0,
+          wastedDBTime: status.diagnosis.metrics.wasted_db_time || 0,
+          dominateDBTime: status.diagnosis.metrics.dominate_db_time || 0,
+        };
+        
+        setMetricsCardsHistory(prev => {
+          const updated = [...prev, newCardPoint];
+          // Храним только последние 5 точек
+          return updated.slice(-5);
         });
       }
       
@@ -293,8 +314,8 @@ const Dashboard: React.FC = () => {
 
       {/* Main Content */}
       <main className="max-w-[1800px] mx-auto px-6 py-6">
-        {/* Top Row - Chart, Metrics and Status */}
-        <div className="grid grid-cols-12 gap-4 mb-4 items-stretch">
+        {/* Top Row - Chart, Metrics and Status (до карточек Commit Ratio) */}
+        <div className="grid grid-cols-12 gap-4 items-stretch">
           {/* DB Time Chart */}
           <div className="col-span-5">
             <DBTimeChart
@@ -307,7 +328,7 @@ const Dashboard: React.FC = () => {
           </div>
 
           {/* Metrics Column */}
-          <div className="col-span-2 flex flex-col gap-4 h-full">
+          <div className="col-span-2 flex flex-col gap-4">
             <MetricCard 
               title="TPS" 
               value={Math.round(metrics?.tps || 0)} 
@@ -327,17 +348,68 @@ const Dashboard: React.FC = () => {
             />
           </div>
 
-          {/* Database Status */}
+          {/* Database Status - только верхняя часть (Status + Metrics Cards) */}
           <div className="col-span-5">
-            <DatabaseStatus 
-              cacheHitRatio={dashboardData?.cache_hit_ratio || 0}
-              topTables={dashboardData?.top_tables_by_size || []}
-            />
+            <div className="space-y-4 h-full flex flex-col">
+              {/* Status Block */}
+              <div className={`relative rounded-[20px] overflow-hidden ${
+                (dashboardData?.cache_hit_ratio || 0) > 0
+                  ? "bg-gradient-to-t from-[#44E916]/40 via-[#44E916]/20 to-[#44E916]/5"
+                  : "bg-gradient-to-t from-[#EF4444]/40 via-[#EF4444]/20 to-[#EF4444]/5"
+              }`}
+              style={{
+                boxShadow: (dashboardData?.cache_hit_ratio || 0) > 0
+                  ? 'inset 0 -80px 100px rgba(68, 233, 22, 0.15)'
+                  : 'inset 0 -80px 100px rgba(239, 68, 68, 0.15)'
+              }}>
+                <div className="p-6">
+                  <h2 className="font-['Inter'] font-bold text-white text-2xl mb-4">
+                    Database Status
+                  </h2>
+                  <div className="flex items-center justify-center py-4">
+                    <span className={`font-['Inter'] font-bold text-[80px] uppercase tracking-wider ${
+                      (dashboardData?.cache_hit_ratio || 0) > 0
+                        ? "text-[#44E916]" 
+                        : "text-[#EF4444]"
+                    }`}
+                    style={{
+                      textShadow: (dashboardData?.cache_hit_ratio || 0) > 0
+                        ? '0 0 40px rgba(68, 233, 22, 0.8), 0 0 80px rgba(68, 233, 22, 0.4)'
+                        : '0 0 40px rgba(239, 68, 68, 0.8), 0 0 80px rgba(239, 68, 68, 0.4)'
+                    }}>
+                      {(dashboardData?.cache_hit_ratio || 0) > 0 ? "ALIVE" : "OFFLINE"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Metrics Cards with History */}
+              <div className="grid grid-cols-3 gap-4 flex-1">
+                <MetricHistoryCard
+                  title="Commit Ratio"
+                  value={metrics?.commit_ratio || 0}
+                  color="#10B981"
+                  history={metricsCardsHistory.map(h => h.commitRatio)}
+                />
+                <MetricHistoryCard
+                  title="Wasted DB time"
+                  value={metrics?.wasted_db_time || 0}
+                  color="#06B6D4"
+                  history={metricsCardsHistory.map(h => h.wastedDBTime)}
+                />
+                <MetricHistoryCard
+                  title="Dominate DB time"
+                  value={metrics?.dominate_db_time || 0}
+                  color="#A855F7"
+                  history={metricsCardsHistory.map(h => h.dominateDBTime)}
+                />
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Bottom Row - Gauges and Quality Chart in 2x2 grid */}
-        <div className="grid grid-cols-12 gap-4">
+        {/* Bottom Row - Gauges, Quality Chart и Cache + Disc usage */}
+        <div className="grid grid-cols-12 gap-4 mt-4">
           {/* Gauges and Quality Chart - занимают столько же по ширине, сколько большой график + карточки (col-span-7) */}
           <div className="col-span-7">
             <div className="grid grid-cols-2 gap-4 h-full">
@@ -384,8 +456,58 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
           
-          {/* Empty space to match the layout */}
-          <div className="col-span-5"></div>
+          {/* Cache + Disc usage - выравнивается с нижней сеткой */}
+          <div className="col-span-5">
+            <div className="bg-[#212020] rounded-[20px] border border-[#312f2f] p-6 h-full">
+              {/* Cache Hit Ratio */}
+              <div className="mb-6">
+                <h3 className="font-['Inter'] font-bold text-white text-sm mb-3">
+                  Cache Hit Ratio
+                </h3>
+                <div className="bg-gradient-to-br from-[#06B6D4]/20 to-[#06B6D4]/5 rounded-lg p-4 border border-[#312f2f]/50">
+                  <div className="flex items-center justify-between">
+                    <span className="font-['Inter'] font-bold text-3xl text-[#06B6D4]">
+                      {(dashboardData?.cache_hit_ratio || 0).toFixed(1)}%
+                    </span>
+                    <span className="font-['Inter'] text-[#626262] text-xs">
+                      current
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Disc Usage */}
+              <div>
+                <h3 className="font-['Inter'] font-bold text-white text-lg mb-4">
+                  Disc usage
+                </h3>
+                <div className="space-y-3 max-h-[200px] overflow-y-auto">
+                  {dashboardData?.top_tables_by_size && dashboardData.top_tables_by_size.length > 0 ? (
+                    dashboardData.top_tables_by_size.map((item, index) => (
+                      <div key={index} className="flex items-center gap-3">
+                        <span className="font-['Inter'] text-white text-sm w-32 truncate">
+                          {item.table_name}
+                        </span>
+                        <div className="flex-1 h-6 bg-[#2a2929] rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-[#06B6D4] to-[#0891B2] transition-all duration-500"
+                            style={{ width: `${Math.min(item.usage_percent, 100)}%` }}
+                          />
+                        </div>
+                        <span className="font-['Inter'] text-white text-sm w-20 text-right">
+                          {item.size_pretty}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center text-[#626262] py-4 font-['Inter']">
+                      No table data available
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </main>
     </div>

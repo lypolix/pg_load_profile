@@ -16,6 +16,9 @@ export interface WorkloadMetrics {
   total_commits: number;
   total_rollbacks: number;
   total_calls: number;
+  commit_ratio: number;
+  wasted_db_time: number;
+  dominate_db_time: number;
 }
 
 export interface TuningConfig {

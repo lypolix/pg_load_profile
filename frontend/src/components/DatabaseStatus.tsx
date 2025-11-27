@@ -1,19 +1,28 @@
 import React from "react";
-import { TableStats } from "../types/api";
+import { TableStats, WorkloadMetrics } from "../types/api";
+import { MetricHistoryCard } from "./MetricHistoryCard";
 
 interface DatabaseStatusProps {
   cacheHitRatio?: number;
   topTables?: TableStats[];
+  metrics?: WorkloadMetrics;
+  history?: Array<{
+    commitRatio: number;
+    wastedDBTime: number;
+    dominateDBTime: number;
+  }>;
 }
 
 export const DatabaseStatus: React.FC<DatabaseStatusProps> = ({
   cacheHitRatio = 0,
   topTables = [],
+  metrics,
+  history = [],
 }) => {
   const isAlive = cacheHitRatio > 0;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 h-full flex flex-col">
       {/* Status Block - Отдельный блок */}
       <div className={`relative rounded-[20px] overflow-hidden ${
         isAlive
@@ -46,6 +55,28 @@ export const DatabaseStatus: React.FC<DatabaseStatusProps> = ({
         </div>
       </div>
 
+      {/* Metrics Cards with History */}
+      <div className="grid grid-cols-3 gap-4 flex-1">
+        <MetricHistoryCard
+          title="Commit Ratio"
+          value={metrics?.commit_ratio || 0}
+          color="#10B981"
+          history={history.map(h => h.commitRatio)}
+        />
+        <MetricHistoryCard
+          title="Wasted DB time"
+          value={metrics?.wasted_db_time || 0}
+          color="#06B6D4"
+          history={history.map(h => h.wastedDBTime)}
+        />
+        <MetricHistoryCard
+          title="Dominate DB time"
+          value={metrics?.dominate_db_time || 0}
+          color="#A855F7"
+          history={history.map(h => h.dominateDBTime)}
+        />
+      </div>
+
       {/* Rest in grey block */}
       <div className="bg-[#212020] rounded-[20px] border border-[#312f2f] p-6">
         {/* Cache Hit Ratio */}
@@ -68,7 +99,7 @@ export const DatabaseStatus: React.FC<DatabaseStatusProps> = ({
         {/* Disc Usage */}
         <div>
           <h3 className="font-['Inter'] font-bold text-white text-lg mb-4">
-            Disc usage (Top Tables)
+            Disc usage
           </h3>
           <div className="space-y-3 max-h-[200px] overflow-y-auto">
             {topTables.length > 0 ? (
