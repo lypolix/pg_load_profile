@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/lypolix/pg_load_profile/internal/collector"
 	"github.com/lypolix/pg_load_profile/internal/models"
@@ -50,7 +49,7 @@ func (c *Calculator) CalculateMetrics(ctx context.Context, duration time.Duratio
 	}
 
 	// ---------------------------------------------------------
-	// 4. Расчет TPS, QPS, Latency
+	// 4. Расчет TPS, QPS, Latency и DB TIME
 	// ---------------------------------------------------------
 	if startStats != nil && endStats != nil {
 		seconds := duration.Seconds()
@@ -66,7 +65,13 @@ func (c *Calculator) CalculateMetrics(ctx context.Context, duration time.Duratio
 		m.TPS = deltaCommits / seconds
 		m.QPS = deltaCalls / seconds
 		m.RollbackRate = deltaRollbacks / seconds
-		
+
+		// DB Time Total теперь берется из pg_stat_statements
+		// Это общее время, которое база потратила на выполнение запросов
+		if deltaExecTime > 0 {
+			m.DBTimeTotal = deltaExecTime / 1000.0 // в секунды
+		}
+
 		if deltaCalls > 0 {
 			m.AvgLatency = deltaExecTime / deltaCalls // ms
 		}
@@ -78,36 +83,13 @@ func (c *Calculator) CalculateMetrics(ctx context.Context, duration time.Duratio
 	}
 
 	// ---------------------------------------------------------
-	// 5. Расчет DB Time (Ваш оригинальный код)
+	// 5. Проверка на активность (EARLY EXIT)
 	// ---------------------------------------------------------
-	
-	querySnapshot := `
-        WITH range_snaps AS (
-            SELECT total_exec_time 
-            FROM profile_metrics.snapshots 
-            WHERE snapshot_time >= NOW() - $1::interval 
-            ORDER BY snapshot_time ASC
-        )
-        SELECT 
-            (SELECT total_exec_time FROM range_snaps ORDER BY total_exec_time DESC LIMIT 1) - 
-            (SELECT total_exec_time FROM range_snaps ORDER BY total_exec_time ASC LIMIT 1)
-        AS db_time_delta;
-    `
-
-	// В PostgreSQL total_exec_time хранится в миллисекундах
-	var dbTimeTotalMs *float64
-	err = c.pool.QueryRow(ctx, querySnapshot, duration.String()).Scan(&dbTimeTotalMs)
-	if err != nil && err != pgx.ErrNoRows {
-		return m, fmt.Errorf("failed to get snapshot delta: %w", err)
-	}
-
-	if dbTimeTotalMs == nil || *dbTimeTotalMs <= 0 {
-		// Если снэпшотов недостаточно, возвращаем то, что есть (TPS/QPS уже заполнены)
+	// Если за интервал времени не было выполнено ни одного запроса,
+	// то нет смысла анализировать дальше — это IDLE.
+	if m.DBTimeTotal <= 0 {
 		return m, nil
 	}
-
-	// Переводим в секунды для удобства
-	m.DBTimeTotal = *dbTimeTotalMs / 1000.0
 
 	// ========================================================================
 	// 6. Считаем пропорции нагрузки через ASH (pg_stat_activity)

@@ -221,7 +221,12 @@ func setupHTTPServer(pool *pgxpool.Pool, mlClient *client.MLClient) {
 		state.mu.RUnlock()
 
 		if profile == "" || profile == "IDLE" {
-			http.Error(w, "No active recommendations to apply (System is IDLE or Init)", http.StatusBadRequest)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":         "noop",
+				"message":        "No active recommendations to apply (System is IDLE or Init).",
+				"applied_config": map[string]string{},
+			})
 			return
 		}
 
