@@ -65,7 +65,14 @@ func (c *Calculator) CalculateMetrics(ctx context.Context, duration time.Duratio
 
 		m.TPS = deltaCommits / seconds
 		m.QPS = deltaCalls / seconds
-		m.RollbackRate = deltaRollbacks / seconds
+		
+		// Rollback% - процент откатов от общего числа транзакций
+		totalTransactions := deltaCommits + deltaRollbacks
+		if totalTransactions > 0 {
+			m.RollbackRate = (deltaRollbacks / totalTransactions) * 100 // процент
+		} else {
+			m.RollbackRate = 0
+		}
 		
 		if deltaCalls > 0 {
 			m.AvgLatency = deltaExecTime / deltaCalls // ms
