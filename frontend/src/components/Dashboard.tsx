@@ -451,7 +451,7 @@ const Dashboard: React.FC = () => {
 
               {/* Quality Chart */}
               <div>
-                <QualityChart />
+                <QualityChart history={metricsHistory} />
               </div>
             </div>
           </div>

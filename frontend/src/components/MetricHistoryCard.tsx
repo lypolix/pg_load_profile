@@ -22,16 +22,52 @@ export const MetricHistoryCard: React.FC<MetricHistoryCardProps> = ({
     }))
   ];
 
-  // Форматируем значение
+  // Форматируем значение (запятая вместо точки для десятичных)
   const formatValue = (val: number): string => {
     if (val >= 1000) {
       return val.toFixed(0);
     }
-    return val.toFixed(1);
+    return val.toFixed(1).replace('.', ',');
   };
 
+  // Определяем цвет градиента в зависимости от цвета метрики
+  const getGradientColors = () => {
+    if (color === "#10B981") {
+      // Зеленый для Commit Ratio
+      return {
+        from: "from-[#10B981]/40",
+        via: "via-[#10B981]/20",
+        to: "to-[#10B981]/5",
+        shadow: "rgba(16, 185, 129, 0.15)"
+      };
+    } else if (color === "#06B6D4") {
+      // Голубой для Wasted DB time
+      return {
+        from: "from-[#06B6D4]/40",
+        via: "via-[#06B6D4]/20",
+        to: "to-[#06B6D4]/5",
+        shadow: "rgba(6, 182, 212, 0.15)"
+      };
+    } else {
+      // Фиолетовый для Dominate DB time
+      return {
+        from: "from-[#A855F7]/40",
+        via: "via-[#A855F7]/20",
+        to: "to-[#A855F7]/5",
+        shadow: "rgba(168, 85, 247, 0.15)"
+      };
+    }
+  };
+
+  const gradient = getGradientColors();
+
   return (
-    <div className="bg-[#212020] rounded-[20px] border border-[#312f2f] p-6 flex flex-col h-full">
+    <div 
+      className={`relative rounded-[20px] overflow-hidden bg-gradient-to-t ${gradient.from} ${gradient.via} ${gradient.to} border border-[#312f2f] p-6 flex flex-col h-full`}
+      style={{
+        boxShadow: `inset 0 -80px 100px ${gradient.shadow}`
+      }}
+    >
       <h3 className="font-['Inter'] font-bold text-white text-lg mb-4">
         {title}
       </h3>
