@@ -87,13 +87,30 @@ func main() {
 	select {}
 }
 
+// corsMiddleware добавляет CORS заголовки для всех запросов
+func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		
+		// Обработка preflight запросов
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		
+		next(w, r)
+	}
+}
+
 func setupHTTPServer(pool *pgxpool.Pool) {
 	
 	// -------------------------------------------------------------------------
 	// Эндпоинт 1: Применение ПРЕСЕТА конфигурации БД
 	// GET /config/apply?preset=oltp
 	// -------------------------------------------------------------------------
-	http.HandleFunc("/config/apply", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/config/apply", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		preset := r.URL.Query().Get("preset")
 		if preset == "" {
 			http.Error(w, "Usage: /config/apply?preset=[oltp|olap|iot...]", http.StatusBadRequest)
@@ -127,14 +144,14 @@ func setupHTTPServer(pool *pgxpool.Pool) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(response)
-	})
+	}))
 
 	// -------------------------------------------------------------------------
 	// Эндпоинт 2: Ручное изменение параметров (PATCH)
 	// PATCH /config/custom 
 	// Body: {"work_mem": "64MB"}
 	// -------------------------------------------------------------------------
-	http.HandleFunc("/config/custom", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/config/custom", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPatch && r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed (use PATCH or POST)", http.StatusMethodNotAllowed)
 			return
@@ -162,13 +179,13 @@ func setupHTTPServer(pool *pgxpool.Pool) {
 			"message": "Custom configuration applied.",
 			"applied_settings": configMap,
 		})
-	})
+	}))
 
 	// -------------------------------------------------------------------------
 	// Эндпоинт 3: Применение РЕКОМЕНДАЦИЙ AI (POST)
 	// POST /config/apply-recommendations
 	// -------------------------------------------------------------------------
-	http.HandleFunc("/config/apply-recommendations", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/config/apply-recommendations", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed (use POST)", http.StatusMethodNotAllowed)
 			return
@@ -208,13 +225,13 @@ func setupHTTPServer(pool *pgxpool.Pool) {
 			"message": "Recommendations applied successfully.",
 			"applied_config": recommendations,
 		})
-	})
+	}))
 
 	// -------------------------------------------------------------------------
 	// Эндпоинт 4: Запуск нагрузки
 	// GET /load/start?scenario=oltp
 	// -------------------------------------------------------------------------
-	http.HandleFunc("/load/start", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/load/start", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		scenario := r.URL.Query().Get("scenario")
 		if scenario == "" {
 			http.Error(w, "Usage: /load/start?scenario=[oltp|olap|iot...]", http.StatusBadRequest)
@@ -245,13 +262,13 @@ func setupHTTPServer(pool *pgxpool.Pool) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
-	})
+	}))
 
 	// -------------------------------------------------------------------------
 	// Эндпоинт 5: Статус (AI Diagnosis)
 	// GET /status
 	// -------------------------------------------------------------------------
-	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/status", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		state.mu.RLock()
 		defer state.mu.RUnlock()
 
@@ -270,13 +287,13 @@ func setupHTTPServer(pool *pgxpool.Pool) {
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			http.Error(w, "Failed to encode JSON", http.StatusInternalServerError)
 		}
-	})
+	}))
 
 	// -------------------------------------------------------------------------
 	// Эндпоинт 6: Сводная панель (Dashboard)
 	// GET /dashboard
 	// -------------------------------------------------------------------------
-	http.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/dashboard", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		summary, err := collector.GetSystemSummary(pool)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to get dashboard data: %v", err), http.StatusInternalServerError)
@@ -285,7 +302,7 @@ func setupHTTPServer(pool *pgxpool.Pool) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(summary)
-	})
+	}))
 
 	go func() {
 		log.Println("Server running on :8080")

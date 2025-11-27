@@ -1,212 +1,257 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-
-interface DatabaseStats {
-  totalQueries: number;
-  avgResponseTime: number;
-  activeConnections: number;
-  cacheHitRatio: number;
-}
+import { DBTimeChart } from "./DBTimeChart";
+import { MetricCard } from "./MetricCard";
+import { GaugeChart } from "./GaugeChart";
+import { DatabaseStatus } from "./DatabaseStatus";
+import { QualityChart } from "./QualityChart";
+import { ApiService } from "../services/api";
+import { StatusResponse, DashboardData } from "../types/api";
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const { logout, user } = useAuth();
-  const [stats, setStats] = useState<DatabaseStats>({
-    totalQueries: 0,
-    avgResponseTime: 0,
-    activeConnections: 0,
-    cacheHitRatio: 0,
-  });
+  const { logout } = useAuth();
+  const [selectedMode, setSelectedMode] = useState("OLTP");
+  const [statusData, setStatusData] = useState<StatusResponse | null>(null);
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const configModes = [
+    "OLTP",
+    "OLAP",
+    "Write-heavy",
+    "High - concurrency",
+    "Read-heavy",
+    "HTAP",
+    "Bulk ETL",
+    "Archive-Scan",
+  ];
+
+  const loadScenarios = [
+    { value: "oltp", label: "OLTP" },
+    { value: "olap", label: "OLAP" },
+    { value: "iot", label: "IoT/Write-heavy" },
+    { value: "locks", label: "High Concurrency" },
+    { value: "reporting", label: "Read-heavy" },
+  ];
+
+  // Загрузка данных
+  const fetchData = async () => {
+    try {
+      setError(null);
+      const [status, dashboard] = await Promise.all([
+        ApiService.getStatus(),
+        ApiService.getDashboard(),
+      ]);
+      setStatusData(status);
+      setDashboardData(dashboard);
+      setLoading(false);
+    } catch (err) {
+      console.error("Error fetching data:", err);
+      setError("Не удалось загрузить данные с сервера");
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    // Симуляция загрузки данных
-    const simulateData = () => {
-      setStats({
-        totalQueries: Math.floor(Math.random() * 10000) + 5000,
-        avgResponseTime: Math.random() * 100 + 50,
-        activeConnections: Math.floor(Math.random() * 50) + 10,
-        cacheHitRatio: Math.random() * 20 + 75,
-      });
-    };
-
-    simulateData();
-    const interval = setInterval(simulateData, 3000);
-
+    fetchData();
+    const interval = setInterval(fetchData, 5000); // Обновление каждые 5 секунд
     return () => clearInterval(interval);
   }, []);
 
   const handleLogout = () => {
     logout();
-    navigate('/login');
+    navigate("/login");
   };
 
+  const handleConfigApply = async (preset: string) => {
+    setSelectedMode(preset);
+    try {
+      await ApiService.applyPreset(preset.toLowerCase().replace(/\s+/g, "_"));
+      fetchData();
+    } catch (err) {
+      console.error("Error applying config:", err);
+    }
+  };
+
+  const handleLoadStart = async (scenario: string) => {
+    try {
+      await ApiService.startLoad(scenario);
+      fetchData();
+    } catch (err) {
+      console.error("Error starting load:", err);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen w-full bg-[#0d0d0d] flex items-center justify-center">
+        <div className="text-white text-xl font-['Inter']">Загрузка...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen w-full bg-[#0d0d0d] flex items-center justify-center">
+        <div className="text-red-500 text-xl font-['Inter']">{error}</div>
+      </div>
+    );
+  }
+
+  const metrics = statusData?.diagnosis?.metrics;
+  const profile = statusData?.diagnosis?.profile || "UNKNOWN";
+
   return (
-    <div className="animated-gradient min-h-screen w-full overflow-x-hidden">
+    <div className="min-h-screen w-full bg-[#0d0d0d] overflow-x-hidden">
       {/* Header */}
-      <header className="bg-[#212020]/90 backdrop-blur-sm border-b border-[#312f2f] sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <h1 className="text-2xl font-bold text-white font-['Inter']">
-              PG Load Profile
-            </h1>
-            <span className="text-sm text-[#4f4e4e]">
-              PostgreSQL Performance Dashboard
-            </span>
-          </div>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-white font-['Inter']">{user}</span>
-            <button
-              onClick={handleLogout}
-              className="px-4 py-2 bg-[#191818] text-white rounded-lg border border-[#312f2f] hover:bg-[#212020] hover:border-[#4a4747] transition-all duration-300 font-['Inter'] text-sm"
-            >
-              Выйти
-            </button>
+      <header className="bg-[#1a1a1a]/95 backdrop-blur-sm border-b border-[#312f2f] sticky top-0 z-50">
+        <div className="max-w-[1600px] mx-auto px-6 py-3">
+          <div className="flex items-center justify-between gap-4">
+            {/* Config Presets */}
+            <div className="flex items-center gap-2">
+              {configModes.map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => handleConfigApply(mode)}
+                  className={`px-4 py-2 rounded-lg text-sm font-['Inter'] transition-all ${
+                    selectedMode === mode
+                      ? "bg-[#10B981] text-white shadow-[0_0_15px_rgba(16,185,129,0.5)]"
+                      : "bg-[#212020] text-[#626262] border border-[#312f2f] hover:border-[#4a4747]"
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+
+            {/* Right side */}
+            <div className="flex items-center gap-4">
+              {/* Load Scenario Dropdown */}
+              <div className="relative">
+                <select
+                  onChange={(e) => handleLoadStart(e.target.value)}
+                  className="px-4 py-2 bg-[#212020] text-white rounded-lg border border-[#312f2f] hover:border-[#4a4747] font-['Inter'] text-sm cursor-pointer transition-all appearance-none pr-10"
+                  defaultValue=""
+                >
+                  <option value="" disabled>Выбор нагрузки</option>
+                  {loadScenarios.map((scenario) => (
+                    <option key={scenario.value} value={scenario.value}>
+                      {scenario.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[#626262]">
+                  ▼
+                </div>
+              </div>
+
+              <div className="px-4 py-2 bg-[#212020] text-white rounded-lg border border-[#312f2f] font-['Inter'] text-sm">
+                Профиль: <span className="text-[#10B981] font-bold">{profile}</span>
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-[#626262] font-['Inter']">
+                  Last update: {statusData?.timestamp ? new Date(statusData.timestamp).toLocaleTimeString() : 'N/A'}
+                </div>
+                <button
+                  onClick={fetchData}
+                  className="text-sm text-[#06B6D4] hover:text-[#0891B2] font-['Inter']"
+                >
+                  обновить
+                </button>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="px-4 py-2 bg-[#212020] text-white rounded-lg border border-[#312f2f] hover:bg-[#2a2929] transition-all font-['Inter'] text-sm"
+              >
+                Выйти
+              </button>
+            </div>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-8">
-        {/* Welcome Section */}
-        <div className="mb-8 animate-fade-in">
-          <h2 className="text-3xl font-bold text-white mb-2 font-['Inter']">
-            Добро пожаловать в панель управления
-          </h2>
-          <p className="text-[#4f4e4e] font-['Inter']">
-            Мониторинг производительности базы данных в реальном времени
-          </p>
-        </div>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          {/* Total Queries */}
-          <div className="bg-[#212020]/90 backdrop-blur-sm rounded-xl border border-[#312f2f] p-6 hover:border-[#4a4747] transition-all duration-300 animate-fade-up" style={{'--animation-delay': '0.1s'} as React.CSSProperties}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-[#4f4e4e] text-sm font-['Inter']">
-                Всего запросов
-              </h3>
-              <div className="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center">
-                <svg className="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-              </div>
-            </div>
-            <p className="text-3xl font-bold text-white font-['Inter']">
-              {stats.totalQueries.toLocaleString()}
-            </p>
+      <main className="max-w-[1800px] mx-auto px-6 py-6">
+        {/* Top Row - Chart, Metrics and Status */}
+        <div className="grid grid-cols-12 gap-4 mb-4">
+          {/* DB Time Chart */}
+          <div className="col-span-5">
+            <DBTimeChart
+              dbTimeTotal={metrics?.db_time_total || 0}
+              cpuTime={metrics?.cpu_time || 0}
+              ioTime={metrics?.io_time || 0}
+              lockTime={metrics?.lock_time || 0}
+            />
           </div>
 
-          {/* Avg Response Time */}
-          <div className="bg-[#212020]/90 backdrop-blur-sm rounded-xl border border-[#312f2f] p-6 hover:border-[#4a4747] transition-all duration-300 animate-fade-up" style={{'--animation-delay': '0.2s'} as React.CSSProperties}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-[#4f4e4e] text-sm font-['Inter']">
-                Среднее время ответа
-              </h3>
-              <div className="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
-                <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-            </div>
-            <p className="text-3xl font-bold text-white font-['Inter']">
-              {stats.avgResponseTime.toFixed(2)} <span className="text-lg text-[#4f4e4e]">мс</span>
-            </p>
+          {/* Metrics Column */}
+          <div className="col-span-2 flex flex-col gap-4">
+            <MetricCard 
+              title="TPS" 
+              value={Math.round(metrics?.tps || 0)} 
+              variant="green" 
+            />
+            <MetricCard 
+              title="Rollback%" 
+              value={Math.round(metrics?.rollback_rate || 0)} 
+              variant="default" 
+            />
+            <MetricCard 
+              title="AvgQuery Time" 
+              value={`${Math.round(metrics?.avg_query_latency_ms || 0)}ms`} 
+              variant="default" 
+            />
           </div>
 
-          {/* Active Connections */}
-          <div className="bg-[#212020]/90 backdrop-blur-sm rounded-xl border border-[#312f2f] p-6 hover:border-[#4a4747] transition-all duration-300 animate-fade-up" style={{'--animation-delay': '0.3s'} as React.CSSProperties}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-[#4f4e4e] text-sm font-['Inter']">
-                Активные соединения
-              </h3>
-              <div className="w-8 h-8 bg-purple-500/20 rounded-lg flex items-center justify-center">
-                <svg className="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-              </div>
-            </div>
-            <p className="text-3xl font-bold text-white font-['Inter']">
-              {stats.activeConnections}
-            </p>
-          </div>
-
-          {/* Cache Hit Ratio */}
-          <div className="bg-[#212020]/90 backdrop-blur-sm rounded-xl border border-[#312f2f] p-6 hover:border-[#4a4747] transition-all duration-300 animate-fade-up" style={{'--animation-delay': '0.4s'} as React.CSSProperties}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-[#4f4e4e] text-sm font-['Inter']">
-                Коэффициент попаданий в кеш
-              </h3>
-              <div className="w-8 h-8 bg-yellow-500/20 rounded-lg flex items-center justify-center">
-                <svg className="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-              </div>
-            </div>
-            <p className="text-3xl font-bold text-white font-['Inter']">
-              {stats.cacheHitRatio.toFixed(1)} <span className="text-lg text-[#4f4e4e]">%</span>
-            </p>
+          {/* Database Status */}
+          <div className="col-span-5">
+            <DatabaseStatus 
+              cacheHitRatio={dashboardData?.cache_hit_ratio || 0}
+              topTables={dashboardData?.top_tables_by_size || []}
+            />
           </div>
         </div>
 
-        {/* Additional Info */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Recent Activity */}
-          <div className="bg-[#212020]/90 backdrop-blur-sm rounded-xl border border-[#312f2f] p-6 animate-fade-up" style={{'--animation-delay': '0.5s'} as React.CSSProperties}>
-            <h3 className="text-xl font-bold text-white mb-4 font-['Inter']">
-              Последняя активность
-            </h3>
-            <div className="space-y-3">
-              {[1, 2, 3, 4].map((item) => (
-                <div key={item} className="flex items-center gap-3 p-3 bg-[#191818] rounded-lg border border-[#312f2f]">
-                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                  <div className="flex-1">
-                    <p className="text-white text-sm font-['Inter']">
-                      Запрос выполнен успешно
-                    </p>
-                    <p className="text-[#4f4e4e] text-xs font-['Inter']">
-                      {new Date().toLocaleTimeString('ru-RU')}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
+        {/* Bottom Row - Gauges and Quality Chart */}
+        <div className="grid grid-cols-12 gap-4">
+          {/* Gauges */}
+          <div className="col-span-3">
+            <GaugeChart 
+              title="CPU Usage" 
+              value={Math.round(metrics?.cpu_percent || 0)} 
+              status={
+                (metrics?.cpu_percent || 0) > 80 ? "critical" : 
+                (metrics?.cpu_percent || 0) > 50 ? "warning" : "normal"
+              } 
+            />
+          </div>
+          <div className="col-span-3">
+            <GaugeChart 
+              title="IO Usage" 
+              value={Math.round(metrics?.io_percent || 0)} 
+              status={
+                (metrics?.io_percent || 0) > 80 ? "critical" : 
+                (metrics?.io_percent || 0) > 50 ? "warning" : "normal"
+              } 
+            />
+          </div>
+          <div className="col-span-3">
+            <GaugeChart 
+              title="Lock time usage" 
+              value={Math.round(metrics?.lock_percent || 0)} 
+              status={
+                (metrics?.lock_percent || 0) > 15 ? "critical" : 
+                (metrics?.lock_percent || 0) > 5 ? "warning" : "normal"
+              } 
+            />
           </div>
 
-          {/* System Status */}
-          <div className="bg-[#212020]/90 backdrop-blur-sm rounded-xl border border-[#312f2f] p-6 animate-fade-up" style={{'--animation-delay': '0.6s'} as React.CSSProperties}>
-            <h3 className="text-xl font-bold text-white mb-4 font-['Inter']">
-              Статус системы
-            </h3>
-            <div className="space-y-4">
-              <div>
-                <div className="flex justify-between mb-2">
-                  <span className="text-[#4f4e4e] text-sm font-['Inter']">Использование CPU</span>
-                  <span className="text-white text-sm font-['Inter']">45%</span>
-                </div>
-                <div className="w-full h-2 bg-[#191818] rounded-full overflow-hidden">
-                  <div className="h-full bg-blue-500 rounded-full" style={{ width: '45%' }}></div>
-                </div>
-              </div>
-              <div>
-                <div className="flex justify-between mb-2">
-                  <span className="text-[#4f4e4e] text-sm font-['Inter']">Использование памяти</span>
-                  <span className="text-white text-sm font-['Inter']">68%</span>
-                </div>
-                <div className="w-full h-2 bg-[#191818] rounded-full overflow-hidden">
-                  <div className="h-full bg-green-500 rounded-full" style={{ width: '68%' }}></div>
-                </div>
-              </div>
-              <div>
-                <div className="flex justify-between mb-2">
-                  <span className="text-[#4f4e4e] text-sm font-['Inter']">Использование диска</span>
-                  <span className="text-white text-sm font-['Inter']">32%</span>
-                </div>
-                <div className="w-full h-2 bg-[#191818] rounded-full overflow-hidden">
-                  <div className="h-full bg-purple-500 rounded-full" style={{ width: '32%' }}></div>
-                </div>
-              </div>
-            </div>
+          {/* Quality Chart */}
+          <div className="col-span-3">
+            <QualityChart />
           </div>
         </div>
       </main>
@@ -215,4 +260,3 @@ const Dashboard: React.FC = () => {
 };
 
 export default Dashboard;
-
