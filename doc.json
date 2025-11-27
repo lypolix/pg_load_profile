@@ -1,0 +1,189 @@
+{
+    "project": {
+      "name": "PG Performance Lab",
+      "description": "Автоматизированная система диагностики нагрузки PostgreSQL, генерации бизнес-сценариев и автотюнинга конфигурации. Позволяет найти несоответствия между настройками БД и реальной нагрузкой.",
+      "version": "1.0.0",
+      "stack": [
+        "Go (Golang)",
+        "PostgreSQL 15+",
+        "pgbench",
+        "Docker"
+      ]
+    },
+    "architecture": {
+      "components": [
+        {
+          "name": "Generator",
+          "role": "Эмулирует реальные бизнес-сценарии (Банк, IoT, BI) с помощью pgbench."
+        },
+        {
+          "name": "Collector",
+          "role": "Собирает метрики (pg_stat_activity, IO, Locks, ASH) в реальном времени."
+        },
+        {
+          "name": "Analyzer (AI)",
+          "role": "Классифицирует нагрузку на основе метрик (Score System) и выдает рекомендации."
+        },
+        {
+          "name": "Configurator",
+          "role": "Применяет пресеты настроек (ALTER SYSTEM) и перезагружает конфиг."
+        },
+        {
+          "name": "API Server",
+          "role": "Предоставляет REST API для управления и мониторинга."
+        }
+      ]
+    },
+    "scenarios": {
+      "description": "Бизнес-кейсы, которые умеет эмулировать генератор (/load/start).",
+      "list": [
+        {
+          "id": "oltp",
+          "name": "Classic OLTP (Bank/Shop)",
+          "characteristics": "Высокий TPS, короткие транзакции, много клиентов (50+).",
+          "target_metrics": "High CPU, Moderate WAL, Zero Parallelism."
+        },
+        {
+          "id": "olap",
+          "name": "Analytical BI",
+          "characteristics": "Сложные JOIN/Aggregation, мало клиентов (4), долгие запросы.",
+          "target_metrics": "High IO Read, High CPU (Hash/Sort)."
+        },
+        {
+          "id": "iot",
+          "name": "IoT / Write-Heavy",
+          "characteristics": "Постоянный поток INSERT, почти нет чтений.",
+          "target_metrics": "High WAL Write, High IO Write."
+        },
+        {
+          "id": "locks",
+          "name": "High Concurrency (Sale)",
+          "characteristics": "Борьба за одни и те же строки (Hot Rows).",
+          "target_metrics": "High Lock Wait Time, Low CPU."
+        },
+        {
+          "id": "reporting",
+          "name": "Read-Heavy (Catalog)",
+          "characteristics": "Много легких SELECT из кэша (RAM).",
+          "target_metrics": "100% CPU, ~0% IO Read."
+        },
+        {
+          "id": "etl",
+          "name": "Bulk Load",
+          "characteristics": "Массовая загрузка данных (COPY/Insert packs).",
+          "target_metrics": "High WAL Storm, Checkpoint spikes."
+        },
+        {
+          "id": "cold",
+          "name": "Cold Scan / Maintenance",
+          "characteristics": "VACUUM FULL или чтение архива с диска.",
+          "target_metrics": "100% IO Read, Low CPU."
+        },
+        {
+          "id": "mixed",
+          "name": "HTAP / Mixed",
+          "characteristics": "Смесь транзакций и аналитики.",
+          "target_metrics": "Balanced IO/CPU."
+        }
+      ]
+    },
+    "configuration_presets": {
+      "description": "Пресеты настроек postgresql.conf, оптимизированные под сценарии (/config/apply).",
+      "list": [
+        {
+          "id": "oltp",
+          "key_settings": {
+            "shared_buffers": "128MB",
+            "synchronous_commit": "on",
+            "parallel_workers": "0"
+          }
+        },
+        {
+          "id": "olap",
+          "key_settings": {
+            "shared_buffers": "256MB",
+            "work_mem": "32MB",
+            "parallel_workers": "2"
+          }
+        },
+        {
+          "id": "write_heavy",
+          "key_settings": {
+            "synchronous_commit": "off",
+            "max_wal_size": "8GB",
+            "autovacuum_naptime": "1min"
+          }
+        },
+        {
+          "id": "high_concurrency",
+          "key_settings": {
+            "deadlock_timeout": "100ms",
+            "max_connections": "200"
+          }
+        },
+        {
+          "id": "reporting",
+          "key_settings": {
+            "shared_buffers": "350MB (Max Cache)",
+            "effective_cache_size": "1GB"
+          }
+        }
+      ]
+    },
+    "api": {
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/status",
+          "description": "Главный дашборд. Показывает текущую диагностику, метрики и сравнение (Ground Truth vs AI).",
+          "response_fields": [
+            "timestamp",
+            "ground_truth (Active Config, Load Scenario)",
+            "diagnosis (Profile, Confidence, Tuning Recommendations)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/dashboard",
+          "description": "Сводная статистика здоровья БД (Размер, Аптайм, Топ таблиц, Wait Events).",
+          "response_fields": [
+            "uptime",
+            "db_size",
+            "cache_hit_ratio",
+            "top_wait_events_5min",
+            "top_tables_activity"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/load/start",
+          "params": {
+            "scenario": "oltp | olap | iot | locks | etl | cold | reporting"
+          },
+          "description": "Запускает генерацию нагрузки выбранного типа."
+        },
+        {
+          "method": "GET",
+          "path": "/config/apply",
+          "params": {
+            "preset": "oltp | olap | write_heavy | high_concurrency | ..."
+          },
+          "description": "Применяет пресет настроек к БД (ALTER SYSTEM + RELOAD)."
+        },
+        {
+          "method": "POST",
+          "path": "/config/apply-recommendations",
+          "description": "Автоматически применяет настройки, рекомендованные AI на основе текущей диагностики."
+        },
+        {
+          "method": "PATCH",
+          "path": "/config/custom",
+          "body": {
+            "param_name": "value"
+          },
+          "description": "Ручное изменение конкретных параметров конфигурации."
+        }
+      ]
+    }
+}
+  
