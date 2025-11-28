@@ -104,5 +104,16 @@ export class ApiService {
     }
     return response.json();
   }
+
+  /**
+   * Получить текущую конфигурацию БД
+   */
+  static async getCurrentConfig(): Promise<Record<string, string>> {
+    const response = await fetch(`${API_BASE_URL}/config/current`);
+    if (!response.ok) {
+      throw new Error(`Failed to get current config: ${response.statusText}`);
+    }
+    return response.json();
+  }
 }
 

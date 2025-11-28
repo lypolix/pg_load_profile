@@ -24,6 +24,7 @@ const Dashboard: React.FC = () => {
   const [selectedLoad, setSelectedLoad] = useState("Выбор нагрузки");
   const [isInitializing, setIsInitializing] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [currentConfig, setCurrentConfig] = useState<Record<string, string> | null>(null);
   
   // История метрик для графиков (последние 20 точек)
   const [metricsHistory, setMetricsHistory] = useState<Array<{
@@ -67,12 +68,16 @@ const Dashboard: React.FC = () => {
   const fetchData = async () => {
     try {
       setError(null);
-      const [status, dashboard] = await Promise.all([
+      const [status, dashboard, config] = await Promise.all([
         ApiService.getStatus(),
         ApiService.getDashboard(),
+        ApiService.getCurrentConfig().catch(() => null), // Если не удалось получить, используем null
       ]);
       setStatusData(status);
       setDashboardData(dashboard);
+      if (config) {
+        setCurrentConfig(config);
+      }
       
       // Добавляем данные в историю для графика
       if (status?.diagnosis?.metrics) {
@@ -583,7 +588,7 @@ const Dashboard: React.FC = () => {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         recommendations={statusData?.diagnosis?.tuning_recommendations}
-        currentConfig={statusData?.diagnosis?.tuning_recommendations}
+        currentConfig={currentConfig as any}
         profile={statusData?.diagnosis?.profile}
         onApplyRecommendations={async (mlProfile?: string) => {
           try {
