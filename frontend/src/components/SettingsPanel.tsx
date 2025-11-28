@@ -190,7 +190,38 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     
     try {
       // Передаем профиль от ML, если он есть
-      const mlProfile = mlPrediction?.predicted_scenario;
+      let mlProfile = mlPrediction?.predicted_scenario;
+      
+      // Если пришел массив, берем первый элемент
+      if (Array.isArray(mlProfile)) {
+        mlProfile = mlProfile[0];
+      } else if (typeof mlProfile === 'string') {
+        // Обрабатываем строку, которая может содержать JSON-массив
+        const trimmed = mlProfile.trim();
+        if ((trimmed.startsWith('[') && trimmed.endsWith(']')) || 
+            (trimmed.startsWith("['") && trimmed.endsWith("']")) ||
+            (trimmed.startsWith('["') && trimmed.endsWith('"]'))) {
+          try {
+            // Пробуем распарсить как JSON
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              mlProfile = parsed[0];
+            }
+          } catch (e) {
+            // Если не удалось распарсить как JSON, пробуем извлечь значение вручную
+            // Например, из "['iot']" извлекаем "iot"
+            const match = trimmed.match(/['"]([^'"]+)['"]/);
+            if (match && match[1]) {
+              mlProfile = match[1];
+            }
+          }
+        }
+      }
+      
+      // Преобразуем в строку и приводим к нижнему регистру
+      mlProfile = String(mlProfile || '').toLowerCase().trim();
+      
+      console.log("[SettingsPanel] Applying AI recommendations with ML profile:", mlProfile);
       await onApplyRecommendations(mlProfile);
       onClose();
     } catch (error) {
@@ -255,6 +286,42 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     setMlError(null);
     try {
       const prediction = await ApiService.getMLPrediction();
+      console.log("[SettingsPanel] ML prediction received:", prediction);
+      console.log("[SettingsPanel] predicted_scenario type:", typeof prediction.predicted_scenario, "value:", prediction.predicted_scenario);
+      
+      // Исправляем predicted_scenario, если он пришел как массив или строка с массивом
+      let fixedScenario = prediction.predicted_scenario;
+      
+      if (Array.isArray(fixedScenario)) {
+        fixedScenario = fixedScenario[0];
+        console.log("[SettingsPanel] Fixed predicted_scenario from array to:", fixedScenario);
+      } else if (typeof fixedScenario === 'string') {
+        // Проверяем, является ли строка JSON-массивом (например, "['iot']" или '["iot"]')
+        const trimmed = fixedScenario.trim();
+        if ((trimmed.startsWith('[') && trimmed.endsWith(']')) || 
+            (trimmed.startsWith("['") && trimmed.endsWith("']")) ||
+            (trimmed.startsWith('["') && trimmed.endsWith('"]'))) {
+          try {
+            // Пробуем распарсить как JSON
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              fixedScenario = parsed[0];
+              console.log("[SettingsPanel] Fixed predicted_scenario from JSON string array to:", fixedScenario);
+            }
+          } catch (e) {
+            // Если не удалось распарсить как JSON, пробуем извлечь значение вручную
+            // Например, из "['iot']" извлекаем "iot"
+            const match = trimmed.match(/['"]([^'"]+)['"]/);
+            if (match && match[1]) {
+              fixedScenario = match[1];
+              console.log("[SettingsPanel] Fixed predicted_scenario by regex extraction to:", fixedScenario);
+            }
+          }
+        }
+      }
+      
+      // Обновляем prediction с исправленным значением
+      prediction.predicted_scenario = fixedScenario;
       setMlPrediction(prediction);
     } catch (error) {
       console.error("Error getting ML prediction:", error);

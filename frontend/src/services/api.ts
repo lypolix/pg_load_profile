@@ -54,6 +54,9 @@ export class ApiService {
     const body: any = {};
     if (mlProfile) {
       body.ml_profile = mlProfile;
+      console.log("[API] Applying ML recommendations with profile:", mlProfile);
+    } else {
+      console.log("[API] Applying recommendations without ML profile");
     }
     
     const response = await fetch(`${API_BASE_URL}/config/apply-recommendations`, {
@@ -61,7 +64,7 @@ export class ApiService {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
+      body: JSON.stringify(body), // Всегда отправляем body, даже если пустой
     });
     if (!response.ok) {
       throw new Error(`Failed to apply recommendations: ${response.statusText}`);
