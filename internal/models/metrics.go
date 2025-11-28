@@ -22,4 +22,9 @@ type WorkloadMetrics struct {
 	TotalCommits     int64   `json:"total_commits"`       // Счетчик на момент замера
 	TotalRollbacks   int64   `json:"total_rollbacks"`     // Счетчик на момент замера
 	TotalCalls       int64   `json:"total_calls"`         // Счетчик pg_stat_statements
+	
+	// --- Additional DBA Metrics ---
+	CommitRatio      float64 `json:"commit_ratio"`        // Процент коммитов от всех транзакций
+	WastedDBTime     float64 `json:"wasted_db_time"`     // Процент потраченного времени (lock_time / db_time_total * 100)
+	DominateDBTime   float64 `json:"dominate_db_time"`    // Доминирующий тип DB time (максимум из cpu/io/lock в процентах)
 }

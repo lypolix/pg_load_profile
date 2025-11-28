@@ -1,0 +1,29 @@
+# Игнорировать node_modules фронтенда
+frontend/node_modules/
+frontend/build/
+frontend/.env.local
+frontend/.env
+
+# Игнорировать файлы разработки
+.git
+.gitignore
+*.md
+.vscode/
+.idea/
+
+# Игнорировать временные файлы
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Игнорировать ML модели и данные
+ml/catboost_info/
+ml/model/
+ml/training/
+
+# Игнорировать документацию
+doc.json
+README.md
+frontend/README.md
+
