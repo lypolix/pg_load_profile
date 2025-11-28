@@ -8,7 +8,7 @@ interface SettingsPanelProps {
   recommendations?: TuningConfig;
   currentConfig?: TuningConfig;
   profile?: string;
-  onApplyRecommendations: () => Promise<void>;
+  onApplyRecommendations: (mlProfile?: string) => Promise<void>;
   onApplyCustomConfig: (config: Record<string, string>) => Promise<void>;
 }
 
@@ -20,6 +20,13 @@ interface ConfigField {
   unit: string;
 }
 
+interface MLPrediction {
+  predicted_scenario: string;
+  confidence: number;
+  probabilities: Record<string, number>;
+  status: string;
+}
+
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   isOpen,
   onClose,
@@ -29,6 +36,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onApplyRecommendations,
   onApplyCustomConfig,
 }) => {
+  const [mlPrediction, setMlPrediction] = useState<MLPrediction | null>(null);
+  const [isLoadingML, setIsLoadingML] = useState(false);
+  const [mlError, setMlError] = useState<string | null>(null);
   // Парсим значение из строки типа "128MB" или "4MB"
   const parseValue = (str: string | undefined): string => {
     if (!str) return "8";
@@ -179,7 +189,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     if (!recommendations) return;
     
     try {
-      await onApplyRecommendations();
+      // Передаем профиль от ML, если он есть
+      const mlProfile = mlPrediction?.predicted_scenario;
+      await onApplyRecommendations(mlProfile);
       onClose();
     } catch (error) {
       console.error("Error applying recommendations:", error);
@@ -235,6 +247,20 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       onClose();
     } catch (error) {
       console.error("Error applying developer recommendations:", error);
+    }
+  };
+
+  const handleRequestMLPrediction = async () => {
+    setIsLoadingML(true);
+    setMlError(null);
+    try {
+      const prediction = await ApiService.getMLPrediction();
+      setMlPrediction(prediction);
+    } catch (error) {
+      console.error("Error getting ML prediction:", error);
+      setMlError(error instanceof Error ? error.message : "Ошибка при запросе рекомендации AI");
+    } finally {
+      setIsLoadingML(false);
     }
   };
 
@@ -455,46 +481,132 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 <h2 className="font-['Inter'] font-semibold text-white text-lg mb-4">
                   AI-рекомендатор
                 </h2>
+                
+                {/* Кнопка запроса рекомендации AI */}
+                <button
+                  onClick={handleRequestMLPrediction}
+                  disabled={isLoadingML}
+                  className={`w-full px-6 py-3 mb-6 rounded-lg font-['Inter'] font-semibold text-lg transition-colors ${
+                    isLoadingML
+                      ? "bg-[#7b7575] text-white cursor-not-allowed"
+                      : "bg-[#06B6D4] text-white hover:bg-[#0891B2] shadow-[0_0_15px_rgba(6,182,212,0.3)]"
+                  }`}
+                >
+                  {isLoadingML ? "Запрос к AI..." : "Запросить рекомендацию AI"}
+                </button>
+
                 <div className="flex items-center gap-2 mb-6">
-                  <div className="w-2 h-2 rounded-full bg-[#F59E0B]"></div>
+                  <div className={`w-2 h-2 rounded-full ${
+                    mlPrediction ? "bg-[#10B981]" : mlError ? "bg-[#EF4444]" : "bg-[#F59E0B]"
+                  }`}></div>
                   <span className="font-['Inter'] text-white text-sm">
-                    {recommendations ? "Рекомендации доступны" : "Ожидает запуска"}
+                    {mlPrediction 
+                      ? "Рекомендация получена" 
+                      : mlError 
+                      ? "Ошибка запроса" 
+                      : recommendations 
+                      ? "Рекомендации доступны" 
+                      : "Ожидает запуска"}
                   </span>
-                  {profile && (
+                  {mlPrediction && (
                     <>
                       <span className="font-['Inter'] text-[#7b7575] text-sm">•</span>
                       <span className="font-['Inter'] text-[#06B6D4] text-sm font-semibold">
-                        Профиль: {profile}
+                        Профиль: {mlPrediction.predicted_scenario.toUpperCase()} ({(mlPrediction.confidence * 100).toFixed(1)}%)
                       </span>
                     </>
                   )}
                 </div>
-                
-                {recommendations ? (
+
+                {mlError && (
+                  <div className="mb-6 p-4 bg-[#EF4444]/20 border border-[#EF4444] rounded-lg">
+                    <p className="font-['Inter'] text-[#EF4444] text-sm">{mlError}</p>
+                  </div>
+                )}
+
+                {/* Результат ML предсказания */}
+                {mlPrediction && (
                   <>
-                    <div className="bg-[#373636] rounded-[30px] border border-[#656161] p-6 mb-6 min-h-[200px]">
-                      <div className="space-y-4">
-                        {Object.entries(recommendations).map(([key, value]) => (
-                          <div key={key} className="flex justify-between items-center">
-                            <span className="font-['Inter'] text-white text-sm">{key}:</span>
-                            <span className="font-['Inter'] text-[#10B981] text-sm font-semibold">{value}</span>
+                    <div className="mb-6 bg-[#373636] rounded-[30px] border border-[#656161] p-6">
+                      <h3 className="font-['Inter'] font-semibold text-white text-base mb-4">
+                        Результат анализа AI
+                      </h3>
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center">
+                          <span className="font-['Inter'] text-white text-sm">Предсказанный профиль:</span>
+                          <span className="font-['Inter'] text-[#06B6D4] text-sm font-semibold">
+                            {mlPrediction.predicted_scenario.toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="font-['Inter'] text-white text-sm">Уверенность:</span>
+                          <span className="font-['Inter'] text-[#10B981] text-sm font-semibold">
+                            {(mlPrediction.confidence * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        {mlPrediction.probabilities && Object.keys(mlPrediction.probabilities).length > 0 && (
+                          <div className="mt-4 pt-4 border-t border-[#656161]">
+                            <p className="font-['Inter'] text-[#7b7575] text-xs mb-2">Вероятности профилей:</p>
+                            <div className="space-y-2">
+                              {Object.entries(mlPrediction.probabilities)
+                                .sort(([, a], [, b]) => b - a)
+                                .map(([profile, prob]) => (
+                                  <div key={profile} className="flex justify-between items-center">
+                                    <span className="font-['Inter'] text-white text-xs">
+                                      {profile.toUpperCase()}
+                                    </span>
+                                    <div className="flex items-center gap-2">
+                                      <div className="w-24 h-2 bg-[#2a2929] rounded-full overflow-hidden">
+                                        <div
+                                          className="h-full bg-gradient-to-r from-[#06B6D4] to-[#10B981] transition-all"
+                                          style={{ width: `${prob * 100}%` }}
+                                        />
+                                      </div>
+                                      <span className="font-['Inter'] text-[#7b7575] text-xs w-12 text-right">
+                                        {(prob * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                            </div>
                           </div>
-                        ))}
+                        )}
                       </div>
                     </div>
 
-                    <button
-                      onClick={handleApplyAll}
-                      className="w-full px-6 py-3 bg-[#06B6D4] text-white font-['Inter'] font-semibold rounded-lg hover:bg-[#0891B2] transition-colors shadow-[0_0_15px_rgba(6,182,212,0.3)]"
-                    >
-                      Применить рекомендации AI
-                    </button>
+                    {/* Рекомендации показываем только после получения результата от ML */}
+                    {recommendations && (
+                      <>
+                        <div className="bg-[#373636] rounded-[30px] border border-[#656161] p-6 mb-6 min-h-[200px]">
+                          <h3 className="font-['Inter'] font-semibold text-white text-base mb-4">
+                            Рекомендуемые настройки
+                          </h3>
+                          <div className="space-y-4">
+                            {Object.entries(recommendations).map(([key, value]) => (
+                              <div key={key} className="flex justify-between items-center">
+                                <span className="font-['Inter'] text-white text-sm">{key}:</span>
+                                <span className="font-['Inter'] text-[#10B981] text-sm font-semibold">{value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={handleApplyAll}
+                          className="w-full px-6 py-3 bg-[#06B6D4] text-white font-['Inter'] font-semibold rounded-lg hover:bg-[#0891B2] transition-colors shadow-[0_0_15px_rgba(6,182,212,0.3)]"
+                        >
+                          Применить рекомендации AI
+                        </button>
+                      </>
+                    )}
                   </>
-                ) : (
+                )}
+
+                {/* Показываем только если нет результата от ML */}
+                {!mlPrediction && !mlError && (
                   <div className="bg-[#373636] rounded-[30px] border border-[#656161] p-6 min-h-[200px] flex items-center justify-center">
                     <p className="font-['Inter'] text-[#727278] text-sm text-center">
-                      Нет активных рекомендаций AI.<br />
-                      Запустите нагрузку для получения рекомендаций.
+                      Нажмите "Запросить рекомендацию AI" для получения анализа нагрузки и рекомендаций.
                     </p>
                   </div>
                 )}

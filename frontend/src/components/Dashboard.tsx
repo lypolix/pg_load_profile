@@ -134,6 +134,54 @@ const Dashboard: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isProfileMenuOpen, isLoadMenuOpen]);
 
+  // Маппинг значений active_config на labels кнопок
+  const getConfigLabel = (config: string): string => {
+    const configMap: Record<string, string> = {
+      "oltp": "OLTP",
+      "olap": "OLAP",
+      "write_heavy": "Write-heavy",
+      "high_concurrency": "High-concurrency",
+      "reporting": "Read-heavy",
+      "mixed": "HTAP",
+      "etl": "Bulk ETL",
+      "cold": "Archive-Scan",
+    };
+    
+    // Если config начинается с "AI_RECOMMENDED", извлекаем профиль
+    if (config.startsWith("AI_RECOMMENDED")) {
+      const match = config.match(/AI_RECOMMENDED \((.+)\)/);
+      if (match && match[1]) {
+        const profileName = match[1].toLowerCase();
+        // Маппинг профилей на пресеты
+        const profileToPreset: Record<string, string> = {
+          "oltp": "OLTP",
+          "olap": "OLAP",
+          "iot": "Write-heavy",
+          "locks": "High-concurrency",
+          "reporting": "Read-heavy",
+          "mixed": "HTAP",
+          "etl": "Bulk ETL",
+          "cold": "Archive-Scan",
+          "idle": "OLTP",
+        };
+        return profileToPreset[profileName] || "OLTP";
+      }
+    }
+    
+    return configMap[config.toLowerCase()] || "OLTP";
+  };
+
+  // Определяем активную конфигурацию из ground_truth и обновляем selectedMode
+  useEffect(() => {
+    const activeConfig = statusData?.ground_truth?.active_config || "";
+    if (activeConfig) {
+      const activeConfigLabel = getConfigLabel(activeConfig);
+      if (activeConfigLabel && activeConfigLabel !== selectedMode) {
+        setSelectedMode(activeConfigLabel);
+      }
+    }
+  }, [statusData?.ground_truth?.active_config, selectedMode]);
+
   const handleLogout = () => {
     logout();
     navigate("/login");
@@ -536,9 +584,9 @@ const Dashboard: React.FC = () => {
         recommendations={statusData?.diagnosis?.tuning_recommendations}
         currentConfig={statusData?.diagnosis?.tuning_recommendations}
         profile={statusData?.diagnosis?.profile}
-        onApplyRecommendations={async () => {
+        onApplyRecommendations={async (mlProfile?: string) => {
           try {
-            await ApiService.applyRecommendations();
+            await ApiService.applyRecommendations(mlProfile);
             fetchData();
             alert("Рекомендации AI успешно применены!");
           } catch (err) {
