@@ -2,27 +2,16 @@ package analyzer
 
 import (
 	"fmt"
+	"github.com/lypolix/pg_load_profile/internal/configurator"
 	"github.com/lypolix/pg_load_profile/internal/models"
 )
-
-// TuningConfig — Реальные параметры postgresql.conf, которые можно применить
-type TuningConfig struct {
-	SharedBuffers      string `json:"shared_buffers"`
-	WorkMem            string `json:"work_mem"`
-	MaxWalSize         string `json:"max_wal_size"`       // wal_size
-	CheckpointTimeout  string `json:"checkpoint_timeout"` // checkpoint
-	SynchronousCommit  string `json:"synchronous_commit"` // sync_commit
-	MaxParallelWorkers string `json:"max_parallel_workers_per_gather"` // parallel
-	DeadlockTimeout    string `json:"deadlock_timeout"`   // deadlock_to
-	AutovacuumNaptime  string `json:"autovacuum_naptime,omitempty"`
-}
 
 type Diagnosis struct {
 	Profile     string                 `json:"profile"`
 	Description string                 `json:"description"`
 	Confidence  string                 `json:"confidence"`
 	Metrics     models.WorkloadMetrics `json:"metrics"`
-	Tuning      TuningConfig           `json:"tuning_recommendations"`
+	Tuning      models.TuningConfig    `json:"tuning_recommendations"`
 	Reasoning   string                 `json:"reasoning"`
 }
 
@@ -36,7 +25,7 @@ func ClassifyWorkload(m models.WorkloadMetrics) Diagnosis {
 		d.Description = "Система простаивает. Нагрузки нет."
 		d.Confidence = "High"
 		// Легкие настройки для простоя
-		d.Tuning = TuningConfig{
+		d.Tuning = models.TuningConfig{
 			SharedBuffers:      "128MB",
 			WorkMem:            "4MB",
 			CheckpointTimeout:  "30min",
@@ -127,119 +116,63 @@ func ClassifyWorkload(m models.WorkloadMetrics) Diagnosis {
 
 // fillDetails заполняет конфиг РЕАЛЬНЫМИ параметрами postgresql.conf
 func fillDetails(d Diagnosis) Diagnosis {
+	presetName := ""
 	switch d.Profile {
 	case "LOCKS":
 		d.Profile = "HIGH CONCURRENCY"
 		d.Description = "Критическая конкуренция за ресурсы (Row locks, LWLock)."
 		d.Confidence = "High"
-		d.Tuning = TuningConfig{
-			SharedBuffers:      "128MB",
-			WorkMem:            "4MB",
-			MaxWalSize:         "1GB",
-			CheckpointTimeout:  "10min",
-			SynchronousCommit:  "on",
-			MaxParallelWorkers: "0",
-			DeadlockTimeout:    "100ms", // Агрессивный поиск дедлоков
-		}
-
+		presetName = "high_concurrency"
 	case "COLD":
 		d.Profile = "COLD / ARCHIVE-SCAN"
 		d.Description = "Полное сканирование холодных данных. Бэкап или SeqScan."
 		d.Confidence = "High"
-		d.Tuning = TuningConfig{
-			SharedBuffers:      "128MB",
-			WorkMem:            "64MB", // Много памяти для одного скана
-			MaxWalSize:         "4GB",
-			CheckpointTimeout:  "30min",
-			SynchronousCommit:  "on",
-			MaxParallelWorkers: "4", // Помогаем читать параллельно
-			DeadlockTimeout:    "1s",
-		}
-
+		presetName = "cold"
 	case "OLAP":
 		d.Profile = "OLAP (ANALYTICAL)"
 		d.Description = "Тяжелые запросы, JOIN, агрегации. Data Mining."
 		d.Confidence = "Medium"
-		d.Tuning = TuningConfig{
-			SharedBuffers:      "256MB",
-			WorkMem:            "32MB", // Память для хэшей и сортировок
-			MaxWalSize:         "4GB",
-			CheckpointTimeout:  "30min",
-			SynchronousCommit:  "on",
-			MaxParallelWorkers: "2", // Включаем параллелизм
-			DeadlockTimeout:    "1s",
-		}
-
+		presetName = "olap"
 	case "ETL":
 		d.Profile = "BULK ETL / BATCH LOAD"
 		d.Description = "Массовая загрузка данных. Высокая нагрузка на WAL."
 		d.Confidence = "Medium"
-		d.Tuning = TuningConfig{
-			SharedBuffers:      "128MB",
-			WorkMem:            "16MB",
-			MaxWalSize:         "10GB", // Огромный WAL
-			CheckpointTimeout:  "1h",   // Очень редкие чекпоинты
-			SynchronousCommit:  "on",   // В пресете etl у нас wal_compression=on, здесь оставим дефолт
-			MaxParallelWorkers: "0",
-			DeadlockTimeout:    "1s",
-		}
-
+		presetName = "etl"
 	case "IOT":
 		d.Profile = "WRITE-HEAVY (IoT)"
 		d.Description = "Постоянный поток вставок. Телеметрия."
 		d.Confidence = "Low"
-		d.Tuning = TuningConfig{
-			SharedBuffers:      "128MB",
-			WorkMem:            "4MB",
-			MaxWalSize:         "8GB",
-			CheckpointTimeout:  "30min",
-			SynchronousCommit:  "off", // Быстрая вставка
-			MaxParallelWorkers: "0",
-			DeadlockTimeout:    "1s",
-			AutovacuumNaptime:  "1min",
-		}
-
+		presetName = "write_heavy"
 	case "REPORTING":
 		d.Profile = "READ-HEAVY / REPORTING"
 		d.Description = "Агрессивное чтение из кэша (RAM). Горячие отчеты."
 		d.Confidence = "Medium"
-		d.Tuning = TuningConfig{
-			SharedBuffers:      "350MB", // Максимизируем кэш
-			WorkMem:            "16MB",
-			MaxWalSize:         "1GB",
-			CheckpointTimeout:  "15min",
-			SynchronousCommit:  "on",
-			MaxParallelWorkers: "0",
-			DeadlockTimeout:    "1s",
-		}
-
+		presetName = "reporting"
 	case "OLTP":
 		d.Profile = "CLASSIC OLTP"
 		d.Description = "Банкинг, Биржа. Короткие транзакции."
 		d.Confidence = "High"
-		d.Tuning = TuningConfig{
-			SharedBuffers:      "128MB", // 25% RAM (для Docker small)
-			WorkMem:            "4MB",   // Мало памяти на соединение (их много)
-			MaxWalSize:         "1GB",
-			CheckpointTimeout:  "15min",
-			SynchronousCommit:  "on", // Надежность важна
-			MaxParallelWorkers: "0",  // Выключаем оверхед на воркеров
-			DeadlockTimeout:    "1s",
-		}
-
+		presetName = "oltp"
 	default: // MIXED
 		d.Profile = "MIXED / HTAP"
 		d.Description = "Смешанная нагрузка: транзакции + аналитика."
 		d.Confidence = "Low"
-		d.Tuning = TuningConfig{
-			SharedBuffers:      "200MB",
-			WorkMem:            "16MB",
-			MaxWalSize:         "2GB",
-			CheckpointTimeout:  "15min",
-			SynchronousCommit:  "on",
-			MaxParallelWorkers: "2",
-			DeadlockTimeout:    "1s",
+		presetName = "mixed"
+	}
+
+	settings := configurator.GetSettingsForPreset(presetName)
+	if settings != nil {
+		d.Tuning = models.TuningConfig{
+			SharedBuffers:      settings["shared_buffers"],
+			WorkMem:            settings["work_mem"],
+			MaxWalSize:         settings["max_wal_size"],
+			CheckpointTimeout:  settings["checkpoint_timeout"],
+			SynchronousCommit:  settings["synchronous_commit"],
+			MaxParallelWorkers: settings["max_parallel_workers_per_gather"],
+			DeadlockTimeout:    settings["deadlock_timeout"],
+			AutovacuumNaptime:  settings["autovacuum_naptime"],
 		}
 	}
+
 	return d
 }

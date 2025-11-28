@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/lypolix/pg_load_profile/internal/analyzer"
+	"github.com/lypolix/pg_load_profile/internal/models"
 )
 
 // ApplyCustomConfig применяет произвольные настройки из карты (для PATCH)
@@ -32,7 +32,7 @@ func ApplyCustomConfig(pool *pgxpool.Pool, configMap map[string]string) error {
 }
 
 // ApplyRecommendations применяет структуру TuningConfig, полученную от AI
-func ApplyRecommendations(pool *pgxpool.Pool, cfg analyzer.TuningConfig) error {
+func ApplyRecommendations(pool *pgxpool.Pool, cfg models.TuningConfig) error {
 	settings := map[string]string{
 		"shared_buffers":                  cfg.SharedBuffers,
 		"work_mem":                        cfg.WorkMem,

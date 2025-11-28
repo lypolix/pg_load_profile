@@ -28,7 +28,6 @@
     "locks",
     "mixed",
     "olap",
-    "oltp",
-    "reporting"
+    "oltp"
   ]
 }

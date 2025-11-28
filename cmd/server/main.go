@@ -18,6 +18,7 @@ import (
 	"github.com/lypolix/pg_load_profile/internal/generator"
 	"github.com/lypolix/pg_load_profile/internal/models"
 	"github.com/lypolix/pg_load_profile/internal/storage"
+	"github.com/lypolix/pg_load_profile/internal/client"
 )
 
 type ScenarioInfo struct {
@@ -83,7 +84,8 @@ func main() {
 	}()
 
 	// 4. Запуск HTTP сервера
-	setupHTTPServer(pool)
+	mlClient := client.NewMLClient()
+	setupHTTPServer(pool, mlClient)
 	select {}
 }
 
@@ -92,7 +94,7 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type", "Authorization")
 		
 		// Обработка preflight запросов
 		if r.Method == "OPTIONS" {
@@ -104,8 +106,45 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func setupHTTPServer(pool *pgxpool.Pool) {
-	
+func setupHTTPServer(pool *pgxpool.Pool, mlClient *client.MLClient) {
+
+	// -------------------------------------------------------------------------
+	// Эндпоинт для получения предсказания от ML сервиса
+	// GET /ml/predict
+	// -------------------------------------------------------------------------
+	http.HandleFunc("/ml/predict", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		state.mu.RLock()
+		metrics := state.LatestDiagnosis.Metrics
+		activeConfig := ""
+		if state.CurrentScenario != nil {
+			activeConfig = state.CurrentScenario.ActiveConfig
+		}
+		state.mu.RUnlock()
+
+		prediction, err := mlClient.Predict(r.Context(), metrics, activeConfig)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to get prediction from ML service: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(prediction)
+	}))
+
+	// -------------------------------------------------------------------------
+	// Эндпоинт для получения информации о ML модели
+	// GET /ml/model_info
+	// -------------------------------------------------------------------------
+	http.HandleFunc("/ml/model_info", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		modelInfo, err := mlClient.GetModelInfo(r.Context())
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to get model info from ML service: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(modelInfo)
+	}))
 	// -------------------------------------------------------------------------
 	// Эндпоинт 1: Применение ПРЕСЕТА конфигурации БД
 	// GET /config/apply?preset=oltp
@@ -198,7 +237,12 @@ func setupHTTPServer(pool *pgxpool.Pool) {
 		state.mu.RUnlock()
 
 		if profile == "" || profile == "IDLE" {
-			http.Error(w, "No active recommendations to apply (System is IDLE or Init)", http.StatusBadRequest)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":         "noop",
+				"message":        "No active recommendations to apply (System is IDLE or Init).",
+				"applied_config": map[string]string{},
+			})
 			return
 		}
 
