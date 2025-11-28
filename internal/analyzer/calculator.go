@@ -64,14 +64,22 @@ func (c *Calculator) CalculateMetrics(ctx context.Context, duration time.Duratio
 
 		m.TPS = deltaCommits / seconds
 		m.QPS = deltaCalls / seconds
-		m.RollbackRate = deltaRollbacks / seconds
+		
+		// Rollback% - процент откатов от общего числа транзакций
+		totalTransactions := deltaCommits + deltaRollbacks
+		if totalTransactions > 0 {
+			m.RollbackRate = (deltaRollbacks / totalTransactions) * 100 // процент
+			m.CommitRatio = (deltaCommits / totalTransactions) * 100    // процент коммитов
+		} else {
+			m.RollbackRate = 0
+			m.CommitRatio = 0
+		}
 
 		// DB Time Total теперь берется из pg_stat_statements
 		// Это общее время, которое база потратила на выполнение запросов
 		if deltaExecTime > 0 {
 			m.DBTimeTotal = deltaExecTime / 1000.0 // в секунды
 		}
-
 		if deltaCalls > 0 {
 			m.AvgLatency = deltaExecTime / deltaCalls // ms
 		}
@@ -122,11 +130,15 @@ func (c *Calculator) CalculateMetrics(ctx context.Context, duration time.Duratio
 	}
 
 	if totalSamples == 0 {
-		// Если ASH пуст, но DB Time есть (быстрые запросы проскочили между сэмплами),
-		// считаем, что все это было CPU (Committed)
-		m.DBTimeCommitted = m.DBTimeTotal
-		m.CPUTime = m.DBTimeTotal
-		m.CPUPercent = 100
+		// Если ASH пуст, это означает, что база простаивает (нет активных запросов)
+		// В этом случае все метрики должны быть 0
+		m.DBTimeCommitted = 0
+		m.CPUTime = 0
+		m.IOTime = 0
+		m.LockTime = 0
+		m.CPUPercent = 0
+		m.IOPercent = 0
+		m.LockPercent = 0
 		return m, nil
 	}
 
@@ -153,6 +165,22 @@ func (c *Calculator) CalculateMetrics(ctx context.Context, duration time.Duratio
 	m.CPUPercent = ratioCPU * 100
 	m.IOPercent = ratioIO * 100
 	m.LockPercent = ratioLock * 100
+
+	// Wasted DB Time - процент времени, потраченного на блокировки
+	if m.DBTimeTotal > 0 {
+		m.WastedDBTime = (m.LockTime / m.DBTimeTotal) * 100
+	} else {
+		m.WastedDBTime = 0
+	}
+
+	// Dominate DB Time - доминирующий тип времени (максимум из CPU/IO/Lock)
+	if m.CPUPercent >= m.IOPercent && m.CPUPercent >= m.LockPercent {
+		m.DominateDBTime = m.CPUPercent
+	} else if m.IOPercent >= m.LockPercent {
+		m.DominateDBTime = m.IOPercent
+	} else {
+		m.DominateDBTime = m.LockPercent
+	}
 
 	return m, nil
 }

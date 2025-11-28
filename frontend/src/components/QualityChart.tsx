@@ -1,0 +1,75 @@
+import React from "react";
+import { SimpleLineChart } from "./SimpleLineChart";
+
+interface QualityChartProps {
+  history?: Array<{
+    timestamp: number;
+    dbTimeTotal: number;
+    cpuTime: number;
+    ioTime: number;
+    lockTime: number;
+  }>;
+}
+
+export const QualityChart: React.FC<QualityChartProps> = ({ history = [] }) => {
+  // Используем реальную историю или заглушку
+  const datasets = history.length > 0 ? [
+    {
+      label: "DB total time",
+      data: history.map(h => ({ value: h.dbTimeTotal })),
+      color: "#8B5CF6",
+    },
+    {
+      label: "DB total Committed",
+      data: history.map(h => ({ value: h.cpuTime })),
+      color: "#3B82F6",
+    },
+    {
+      label: "IO time",
+      data: history.map(h => ({ value: h.ioTime })),
+      color: "#10B981",
+    },
+  ] : [
+    {
+      label: "DB total time",
+      data: [{ value: 0 }],
+      color: "#8B5CF6",
+    },
+    {
+      label: "DB total Committed",
+      data: [{ value: 0 }],
+      color: "#3B82F6",
+    },
+    {
+      label: "IO time",
+      data: [{ value: 0 }],
+      color: "#10B981",
+    },
+  ];
+
+  return (
+    <div className="bg-[#212020] rounded-[20px] border border-[#312f2f] p-6 h-full flex flex-col">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-['Inter'] font-bold text-white text-lg">
+          Database quality
+        </h3>
+        <div className="flex gap-4">
+          {datasets.map((dataset, idx) => (
+            <div key={idx} className="flex items-center gap-2">
+              <div
+                className="w-3 h-3 rounded-full"
+                style={{ backgroundColor: dataset.color }}
+              />
+              <span className="text-xs text-white font-['Inter']">
+                {dataset.label}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="flex-1 min-h-[160px]">
+        <SimpleLineChart datasets={datasets} width={540} height={150} maxValue={150} />
+      </div>
+    </div>
+  );
+};
