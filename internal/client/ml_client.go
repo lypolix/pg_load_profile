@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/lypolix/pg_load_profile/internal/models"
@@ -118,10 +120,33 @@ func (c *MLClient) Predict(ctx context.Context, metrics models.WorkloadMetrics, 
 		return nil, fmt.Errorf("ml service returned non-200 status: %s", resp.Status)
 	}
 
+	// Сначала читаем raw body для отладки
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read prediction response body: %w", err)
+	}
+
+	// Логируем raw response
+	fmt.Printf("[MLClient] Raw prediction response: %s\n", string(bodyBytes))
+
 	var predResp MLPredictionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&predResp); err != nil {
+	if err := json.Unmarshal(bodyBytes, &predResp); err != nil {
 		return nil, fmt.Errorf("failed to decode prediction response: %w", err)
 	}
+
+	// Если predicted_scenario пришел как массив, исправляем
+	if predResp.PredictedScenario != "" {
+		// Проверяем, не является ли это JSON-строкой массива
+		if strings.HasPrefix(predResp.PredictedScenario, "[") && strings.HasSuffix(predResp.PredictedScenario, "]") {
+			var arr []string
+			if err := json.Unmarshal([]byte(predResp.PredictedScenario), &arr); err == nil && len(arr) > 0 {
+				predResp.PredictedScenario = arr[0]
+				fmt.Printf("[MLClient] Fixed predicted_scenario from array string to: %s\n", predResp.PredictedScenario)
+			}
+		}
+	}
+
+	fmt.Printf("[MLClient] Parsed prediction: scenario=%s, confidence=%.4f\n", predResp.PredictedScenario, predResp.Confidence)
 
 	return &predResp, nil
 }

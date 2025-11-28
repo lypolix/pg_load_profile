@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -247,9 +248,34 @@ func setupHTTPServer(pool *pgxpool.Pool, mlClient *client.MLClient) {
 		var requestBody map[string]interface{}
 		mlProfile := ""
 		if r.Body != nil {
-			json.NewDecoder(r.Body).Decode(&requestBody)
-			if profile, ok := requestBody["ml_profile"].(string); ok && profile != "" {
-				mlProfile = profile
+			if err := json.NewDecoder(r.Body).Decode(&requestBody); err == nil {
+				profileValue := requestBody["ml_profile"]
+				if profileValue != nil {
+					// Обрабатываем разные типы: строка, массив, или что-то еще
+					switch v := profileValue.(type) {
+					case string:
+						mlProfile = v
+					case []interface{}:
+						// Если пришел массив, берем первый элемент
+						if len(v) > 0 {
+							if str, ok := v[0].(string); ok {
+								mlProfile = str
+							}
+						}
+					case []string:
+						// Если пришел массив строк
+						if len(v) > 0 {
+							mlProfile = v[0]
+						}
+					}
+					
+					// Приводим к нижнему регистру и убираем пробелы
+					mlProfile = strings.ToLower(strings.TrimSpace(mlProfile))
+					
+					if mlProfile != "" {
+						log.Printf("[apply-recommendations] Received ML profile: %s", mlProfile)
+					}
+				}
 			}
 		}
 
@@ -270,7 +296,10 @@ func setupHTTPServer(pool *pgxpool.Pool, mlClient *client.MLClient) {
 		if mlProfile != "" {
 			preset, ok := profileToPreset[mlProfile]
 			if !ok {
+				log.Printf("[apply-recommendations] Unknown ML profile: %s, using fallback oltp", mlProfile)
 				preset = "oltp" // fallback
+			} else {
+				log.Printf("[apply-recommendations] Mapped ML profile %s to preset %s", mlProfile, preset)
 			}
 
 			// Применяем пресет
@@ -284,12 +313,16 @@ func setupHTTPServer(pool *pgxpool.Pool, mlClient *client.MLClient) {
 				return
 			}
 
-			// Обновляем стейт
+			// Обновляем стейт - ВАЖНО: не меняем LoadScenario, только ActiveConfig
 			state.mu.Lock()
 			if state.CurrentScenario == nil {
 				state.CurrentScenario = &ScenarioInfo{}
 			}
+			// Сохраняем текущий LoadScenario, чтобы не потерять информацию о нагрузке
+			oldLoadScenario := state.CurrentScenario.LoadScenario
 			state.CurrentScenario.ActiveConfig = preset
+			state.CurrentScenario.LoadScenario = oldLoadScenario // Восстанавливаем нагрузку
+			log.Printf("[apply-recommendations] Updated ActiveConfig to %s, LoadScenario remains %s", preset, oldLoadScenario)
 			state.mu.Unlock()
 
 			w.Header().Set("Content-Type", "application/json")

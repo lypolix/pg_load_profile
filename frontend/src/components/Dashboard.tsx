@@ -176,11 +176,12 @@ const Dashboard: React.FC = () => {
     const activeConfig = statusData?.ground_truth?.active_config || "";
     if (activeConfig) {
       const activeConfigLabel = getConfigLabel(activeConfig);
-      if (activeConfigLabel && activeConfigLabel !== selectedMode) {
+      console.log("Active config:", activeConfig, "-> Label:", activeConfigLabel);
+      if (activeConfigLabel) {
         setSelectedMode(activeConfigLabel);
       }
     }
-  }, [statusData?.ground_truth?.active_config, selectedMode]);
+  }, [statusData?.ground_truth?.active_config]);
 
   const handleLogout = () => {
     logout();
@@ -219,10 +220,10 @@ const Dashboard: React.FC = () => {
     try {
       setIsInitializing(true);
       await ApiService.startLoad("init");
-      alert("База данных инициализируется. Подождите 30-60 секунд, затем можете запускать нагрузку.");
+      // База данных инициализируется
     } catch (err) {
       console.error("Error initializing DB:", err);
-      alert("Ошибка инициализации базы данных");
+      console.error("Ошибка инициализации базы данных");
     } finally {
       setTimeout(() => setIsInitializing(false), 60000); // Разблокировать через минуту
     }
@@ -587,21 +588,20 @@ const Dashboard: React.FC = () => {
         onApplyRecommendations={async (mlProfile?: string) => {
           try {
             await ApiService.applyRecommendations(mlProfile);
-            fetchData();
-            alert("Рекомендации AI успешно применены!");
+            // Небольшая задержка, чтобы backend успел обновить state
+            await new Promise(resolve => setTimeout(resolve, 500));
+            // Обновляем данные - useEffect автоматически обновит selectedMode на основе active_config
+            await fetchData();
           } catch (err) {
             console.error("Error applying recommendations:", err);
-            alert("Ошибка при применении рекомендаций AI.");
           }
         }}
         onApplyCustomConfig={async (config: Record<string, string>) => {
           try {
             await ApiService.applyCustomConfig(config);
-            fetchData();
-            alert("Пользовательская конфигурация успешно применена!");
+            await fetchData();
           } catch (err) {
             console.error("Error applying custom config:", err);
-            alert("Ошибка при применении пользовательской конфигурации.");
           }
         }}
       />

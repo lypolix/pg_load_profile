@@ -130,11 +130,15 @@ func (c *Calculator) CalculateMetrics(ctx context.Context, duration time.Duratio
 	}
 
 	if totalSamples == 0 {
-		// Если ASH пуст, но DB Time есть (быстрые запросы проскочили между сэмплами),
-		// считаем, что все это было CPU (Committed)
-		m.DBTimeCommitted = m.DBTimeTotal
-		m.CPUTime = m.DBTimeTotal
-		m.CPUPercent = 100
+		// Если ASH пуст, это означает, что база простаивает (нет активных запросов)
+		// В этом случае все метрики должны быть 0
+		m.DBTimeCommitted = 0
+		m.CPUTime = 0
+		m.IOTime = 0
+		m.LockTime = 0
+		m.CPUPercent = 0
+		m.IOPercent = 0
+		m.LockPercent = 0
 		return m, nil
 	}
 
