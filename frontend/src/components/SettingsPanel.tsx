@@ -266,12 +266,21 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     if (!recommendations) return;
     
     // Преобразуем TuningConfig в Record<string, string>
+    // Фильтруем пустые значения (пустые строки, undefined, null)
     const config: Record<string, string> = {};
     Object.entries(recommendations).forEach(([key, value]) => {
-      if (value !== undefined) {
-        config[key] = value;
+      // Применяем только непустые значения
+      if (value !== undefined && value !== null && value !== "" && String(value).trim() !== "") {
+        config[key] = String(value);
       }
     });
+    
+    if (Object.keys(config).length === 0) {
+      console.warn("[SettingsPanel] No valid recommendations to apply (all values are empty)");
+      return;
+    }
+    
+    console.log("[SettingsPanel] Applying developer recommendations:", config);
     
     try {
       await onApplyCustomConfig(config);
@@ -517,12 +526,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   <>
                     <div className="bg-[#373636] rounded-[30px] border border-[#656161] p-6 mb-6 min-h-[200px]">
                       <div className="space-y-4">
-                        {Object.entries(recommendations).map(([key, value]) => (
-                          <div key={key} className="flex justify-between items-center">
-                            <span className="font-['Inter'] text-white text-sm">{key}:</span>
-                            <span className="font-['Inter'] text-[#10B981] text-sm font-semibold">{value}</span>
-                          </div>
-                        ))}
+                        {Object.entries(recommendations)
+                          .filter(([key, value]) => value !== undefined && value !== null && value !== "" && String(value).trim() !== "")
+                          .map(([key, value]) => (
+                            <div key={key} className="flex justify-between items-center">
+                              <span className="font-['Inter'] text-white text-sm">{key}:</span>
+                              <span className="font-['Inter'] text-[#10B981] text-sm font-semibold">{String(value)}</span>
+                            </div>
+                          ))}
+                        {Object.entries(recommendations).filter(([key, value]) => value !== undefined && value !== null && value !== "" && String(value).trim() !== "").length === 0 && (
+                          <p className="font-['Inter'] text-[#727278] text-sm text-center">
+                            Нет активных рекомендаций (все параметры пустые)
+                          </p>
+                        )}
                       </div>
                     </div>
 

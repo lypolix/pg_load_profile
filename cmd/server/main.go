@@ -195,6 +195,34 @@ func setupHTTPServer(pool *pgxpool.Pool, mlClient *client.MLClient) {
 	}))
 
 	// -------------------------------------------------------------------------
+	// Эндпоинт для получения текущей конфигурации БД
+	// GET /config/current
+	// -------------------------------------------------------------------------
+	http.HandleFunc("/config/current", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Method not allowed (use GET)",
+			})
+			return
+		}
+
+		currentConfig, err := configurator.GetCurrentConfig(pool)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": fmt.Sprintf("Failed to get current config: %v", err),
+			})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(currentConfig)
+	}))
+
+	// -------------------------------------------------------------------------
 	// Эндпоинт 2: Ручное изменение параметров (PATCH)
 	// PATCH /config/custom 
 	// Body: {"work_mem": "64MB"}

@@ -31,6 +31,40 @@ func ApplyCustomConfig(pool *pgxpool.Pool, configMap map[string]string) error {
 	return nil
 }
 
+// GetCurrentConfig получает текущие значения конфигурационных параметров из БД
+func GetCurrentConfig(pool *pgxpool.Pool) (map[string]string, error) {
+	ctx := context.Background()
+	config := make(map[string]string)
+
+	// Список параметров, которые мы хотим получить
+	params := []string{
+		"shared_buffers",
+		"work_mem",
+		"max_wal_size",
+		"checkpoint_timeout",
+		"synchronous_commit",
+		"max_parallel_workers_per_gather",
+		"deadlock_timeout",
+		"max_parallel_workers",
+		"autovacuum_naptime",
+		"temp_file_limit",
+		"min_wal_size",
+	}
+
+	for _, param := range params {
+		var value string
+		query := fmt.Sprintf("SHOW %s;", param)
+		err := pool.QueryRow(ctx, query).Scan(&value)
+		if err != nil {
+			// Если параметр не найден или недоступен, пропускаем его
+			continue
+		}
+		config[param] = value
+	}
+
+	return config, nil
+}
+
 // ApplyRecommendations применяет структуру TuningConfig, полученную от AI
 func ApplyRecommendations(pool *pgxpool.Pool, cfg models.TuningConfig) error {
 	settings := map[string]string{
