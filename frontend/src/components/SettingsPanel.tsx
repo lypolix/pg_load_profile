@@ -460,6 +460,14 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   <span className="font-['Inter'] text-white text-sm">
                     {recommendations ? "Рекомендации доступны" : "Ожидает запуска"}
                   </span>
+                  {profile && (
+                    <>
+                      <span className="font-['Inter'] text-[#7b7575] text-sm">•</span>
+                      <span className="font-['Inter'] text-[#06B6D4] text-sm font-semibold">
+                        Профиль: {profile}
+                      </span>
+                    </>
+                  )}
                 </div>
                 
                 {recommendations ? (
