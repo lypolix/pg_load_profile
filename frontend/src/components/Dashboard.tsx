@@ -7,6 +7,7 @@ import { GaugeChart } from "./GaugeChart";
 import { DatabaseStatus } from "./DatabaseStatus";
 import { QualityChart } from "./QualityChart";
 import { MetricHistoryCard } from "./MetricHistoryCard";
+import { SettingsPanel } from "./SettingsPanel";
 import { ApiService } from "../services/api";
 import { StatusResponse, DashboardData } from "../types/api";
 
@@ -22,6 +23,7 @@ const Dashboard: React.FC = () => {
   const [isLoadMenuOpen, setIsLoadMenuOpen] = useState(false);
   const [selectedLoad, setSelectedLoad] = useState("Выбор нагрузки");
   const [isInitializing, setIsInitializing] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
   // История метрик для графиков (последние 20 точек)
   const [metricsHistory, setMetricsHistory] = useState<Array<{
@@ -282,8 +284,15 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* Right side: Last update info + Init DB button */}
+            {/* Right side: Settings button + Last update info + Init DB button */}
             <div className="flex items-center gap-4">
+              <button
+                onClick={() => setIsSettingsOpen(true)}
+                className="px-4 py-2 rounded-lg text-sm bg-transparent text-white border border-[#3a3a3a] hover:border-[#10B981] hover:text-[#10B981] transition-all"
+                title="Открыть настройки конфигурации"
+              >
+                ⚙️ Настройки
+              </button>
               <button
                 onClick={handleInitDB}
                 disabled={isInitializing}
@@ -314,6 +323,15 @@ const Dashboard: React.FC = () => {
 
       {/* Main Content */}
       <main className="max-w-[1800px] mx-auto px-6 py-6">
+        {/* Description Block - Left Top Corner */}
+        {statusData?.diagnosis?.description && (
+          <div className="mb-4 p-4 bg-[#212020] rounded-[20px] border border-[#312f2f]">
+            <p className="font-['Inter'] text-white text-base">
+              {statusData.diagnosis.description}
+            </p>
+          </div>
+        )}
+        
         {/* Top Row - Chart, Metrics and Status (до карточек Commit Ratio) */}
         <div className="grid grid-cols-12 gap-4 items-stretch">
           {/* DB Time Chart */}
@@ -510,6 +528,35 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
       </main>
+
+      {/* Settings Panel */}
+      <SettingsPanel
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        recommendations={statusData?.diagnosis?.tuning_recommendations}
+        currentConfig={statusData?.diagnosis?.tuning_recommendations}
+        profile={statusData?.diagnosis?.profile}
+        onApplyRecommendations={async () => {
+          try {
+            await ApiService.applyRecommendations();
+            fetchData();
+            alert("Рекомендации AI успешно применены!");
+          } catch (err) {
+            console.error("Error applying recommendations:", err);
+            alert("Ошибка при применении рекомендаций AI.");
+          }
+        }}
+        onApplyCustomConfig={async (config: Record<string, string>) => {
+          try {
+            await ApiService.applyCustomConfig(config);
+            fetchData();
+            alert("Пользовательская конфигурация успешно применена!");
+          } catch (err) {
+            console.error("Error applying custom config:", err);
+            alert("Ошибка при применении пользовательской конфигурации.");
+          }
+        }}
+      />
     </div>
   );
 };
