@@ -50,9 +50,18 @@ export class ApiService {
   /**
    * Применить рекомендации AI
    */
-  static async applyRecommendations(): Promise<{ status: string; message: string }> {
+  static async applyRecommendations(mlProfile?: string): Promise<{ status: string; message: string }> {
+    const body: any = {};
+    if (mlProfile) {
+      body.ml_profile = mlProfile;
+    }
+    
     const response = await fetch(`${API_BASE_URL}/config/apply-recommendations`, {
       method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
     });
     if (!response.ok) {
       throw new Error(`Failed to apply recommendations: ${response.statusText}`);
@@ -73,6 +82,22 @@ export class ApiService {
     });
     if (!response.ok) {
       throw new Error(`Failed to apply custom config: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Получить предсказание от ML сервиса
+   */
+  static async getMLPrediction(): Promise<{
+    predicted_scenario: string;
+    confidence: number;
+    probabilities: Record<string, number>;
+    status: string;
+  }> {
+    const response = await fetch(`${API_BASE_URL}/ml/predict`);
+    if (!response.ok) {
+      throw new Error(`Failed to get ML prediction: ${response.statusText}`);
     }
     return response.json();
   }

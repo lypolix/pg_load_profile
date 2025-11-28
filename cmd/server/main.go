@@ -94,7 +94,7 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type", "Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		
 		// Обработка preflight запросов
 		if r.Method == "OPTIONS" {
@@ -123,7 +123,11 @@ func setupHTTPServer(pool *pgxpool.Pool, mlClient *client.MLClient) {
 
 		prediction, err := mlClient.Predict(r.Context(), metrics, activeConfig)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to get prediction from ML service: %v", err), http.StatusInternalServerError)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": fmt.Sprintf("Failed to get prediction from ML service: %v", err),
+			})
 			return
 		}
 
@@ -138,7 +142,11 @@ func setupHTTPServer(pool *pgxpool.Pool, mlClient *client.MLClient) {
 	http.HandleFunc("/ml/model_info", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		modelInfo, err := mlClient.GetModelInfo(r.Context())
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to get model info from ML service: %v", err), http.StatusInternalServerError)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": fmt.Sprintf("Failed to get model info from ML service: %v", err),
+			})
 			return
 		}
 
@@ -223,14 +231,78 @@ func setupHTTPServer(pool *pgxpool.Pool, mlClient *client.MLClient) {
 	// -------------------------------------------------------------------------
 	// Эндпоинт 3: Применение РЕКОМЕНДАЦИЙ AI (POST)
 	// POST /config/apply-recommendations
+	// Body (optional): {"ml_profile": "olap"} - профиль от ML сервиса
 	// -------------------------------------------------------------------------
 	http.HandleFunc("/config/apply-recommendations", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed (use POST)", http.StatusMethodNotAllowed)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Method not allowed (use POST)",
+			})
 			return
 		}
 
-		// 1. Берем текущие рекомендации из стейта
+		// Пытаемся получить профиль от ML из body (если есть)
+		var requestBody map[string]interface{}
+		mlProfile := ""
+		if r.Body != nil {
+			json.NewDecoder(r.Body).Decode(&requestBody)
+			if profile, ok := requestBody["ml_profile"].(string); ok && profile != "" {
+				mlProfile = profile
+			}
+		}
+
+		// Маппинг профилей ML на пресеты конфигурации
+		profileToPreset := map[string]string{
+			"oltp":     "oltp",
+			"olap":     "olap",
+			"iot":      "write_heavy",
+			"locks":    "high_concurrency",
+			"reporting": "reporting",
+			"mixed":    "mixed",
+			"etl":      "etl",
+			"cold":     "cold",
+			"init":     "oltp", // по умолчанию для init
+		}
+
+		// Если есть профиль от ML, применяем соответствующий пресет
+		if mlProfile != "" {
+			preset, ok := profileToPreset[mlProfile]
+			if !ok {
+				preset = "oltp" // fallback
+			}
+
+			// Применяем пресет
+			if err := configurator.ApplyPreset(pool, preset); err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]string{
+					"status": "error",
+					"error":  fmt.Sprintf("Error applying preset for ML profile %s: %v", mlProfile, err),
+				})
+				return
+			}
+
+			// Обновляем стейт
+			state.mu.Lock()
+			if state.CurrentScenario == nil {
+				state.CurrentScenario = &ScenarioInfo{}
+			}
+			state.CurrentScenario.ActiveConfig = preset
+			state.mu.Unlock()
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":        "success",
+				"message":       fmt.Sprintf("ML recommendations applied successfully. Profile: %s, Preset: %s", mlProfile, preset),
+				"ml_profile":    mlProfile,
+				"applied_preset": preset,
+			})
+			return
+		}
+
+		// Fallback: используем старую логику (локальный профиль)
 		state.mu.RLock()
 		recommendations := state.LatestDiagnosis.Tuning
 		profile := state.LatestDiagnosis.Profile
@@ -246,7 +318,7 @@ func setupHTTPServer(pool *pgxpool.Pool, mlClient *client.MLClient) {
 			return
 		}
 
-		// 2. Применяем их
+		// Применяем рекомендации
 		if err := configurator.ApplyRecommendations(pool, recommendations); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -256,10 +328,12 @@ func setupHTTPServer(pool *pgxpool.Pool, mlClient *client.MLClient) {
 			})
 			return
 		}
-		
-		// 3. Обновляем стейт
+
+		// Обновляем стейт
 		state.mu.Lock()
-		if state.CurrentScenario == nil { state.CurrentScenario = &ScenarioInfo{} }
+		if state.CurrentScenario == nil {
+			state.CurrentScenario = &ScenarioInfo{}
+		}
 		state.CurrentScenario.ActiveConfig = "AI_RECOMMENDED (" + profile + ")"
 		state.mu.Unlock()
 
