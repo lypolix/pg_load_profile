@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/lypolix/pg_load_profile/internal/collector"
 	"github.com/lypolix/pg_load_profile/internal/models"
 )
 
@@ -17,63 +18,169 @@ func NewCalculator(pool *pgxpool.Pool) *Calculator {
 	return &Calculator{pool: pool}
 }
 
-// CalculateMetrics считает метрики за последние duration времени
+// CalculateMetrics считает метрики: TPS/QPS (через дельты) + DB Time (через ASH/Snapshots)
 func (c *Calculator) CalculateMetrics(ctx context.Context, duration time.Duration) (models.WorkloadMetrics, error) {
 	var m models.WorkloadMetrics
-	
-	startTime := time.Now().Add(-duration)
 
-	// 1. Считаем DB Time Total из pg_stat_statements (прирост total_exec_time)
-	// Примечание: для точности тут нужно сравнивать снапшоты, но для старта возьмем сумму из ASH как прокси активности
-	// В идеале ASH count * 1 sec = DB Time (в секундах)
-	
-	// Для данного этапа используем ASH данные, так как они точнее показывают распределение во времени
-	query := `
-		WITH ash_stats AS (
-			SELECT
-				count(*) as total_samples,
-				count(*) FILTER (WHERE wait_event IS NULL) as cpu_samples,
-				count(*) FILTER (WHERE wait_event_type IN ('IO', 'LWLock', 'Lock')) as wait_samples,
-				count(*) FILTER (WHERE wait_event_type = 'IO') as io_samples,
-				count(*) FILTER (WHERE wait_event_type IN ('Lock', 'LWLock')) as lock_samples
-			FROM profile_metrics.ash_samples
-			WHERE sample_time > $1
-		)
-		SELECT 
-			total_samples,
-			cpu_samples,
-			io_samples,
-			lock_samples
-		FROM ash_stats;
-	`
-
-	var total, cpu, io, lock float64
-	err := c.pool.QueryRow(ctx, query, startTime).Scan(&total, &cpu, &io, &lock)
+	// ---------------------------------------------------------
+	// 1. Снапшот счетчиков "ДО" (Start Snapshot)
+	// ---------------------------------------------------------
+	startStats, err := collector.GetRawStats(c.pool)
 	if err != nil {
-		return m, fmt.Errorf("failed to calc metrics: %w", err)
+		// Логируем, но не падаем критично, если не смогли взять стату (например, нет pg_stat_statements)
+		fmt.Printf("[Calculator] Warning: failed to get start stats: %v\n", err)
 	}
 
-	// Если данных нет
-	if total == 0 {
+	// ---------------------------------------------------------
+	// 2. Ждем накопления данных
+	// ---------------------------------------------------------
+	select {
+	case <-ctx.Done():
+		return m, ctx.Err()
+	case <-time.After(duration):
+	}
+
+	// ---------------------------------------------------------
+	// 3. Снапшот счетчиков "ПОСЛЕ" (End Snapshot)
+	// ---------------------------------------------------------
+	endStats, err := collector.GetRawStats(c.pool)
+	if err != nil {
+		fmt.Printf("[Calculator] Warning: failed to get end stats: %v\n", err)
+	}
+
+	// ---------------------------------------------------------
+	// 4. Расчет TPS, QPS, Latency и DB TIME
+	// ---------------------------------------------------------
+	if startStats != nil && endStats != nil {
+		seconds := duration.Seconds()
+		if seconds == 0 {
+			seconds = 1
+		}
+
+		deltaCommits := float64(endStats.XactCommit - startStats.XactCommit)
+		deltaRollbacks := float64(endStats.XactRollback - startStats.XactRollback)
+		deltaCalls := float64(endStats.TotalCalls - startStats.TotalCalls)
+		deltaExecTime := endStats.TotalExecTime - startStats.TotalExecTime // ms
+
+		m.TPS = deltaCommits / seconds
+		m.QPS = deltaCalls / seconds
+		
+		// Rollback% - процент откатов от общего числа транзакций
+		totalTransactions := deltaCommits + deltaRollbacks
+		if totalTransactions > 0 {
+			m.RollbackRate = (deltaRollbacks / totalTransactions) * 100 // процент
+			m.CommitRatio = (deltaCommits / totalTransactions) * 100    // процент коммитов
+		} else {
+			m.RollbackRate = 0
+			m.CommitRatio = 0
+		}
+
+		// DB Time Total теперь берется из pg_stat_statements
+		// Это общее время, которое база потратила на выполнение запросов
+		if deltaExecTime > 0 {
+			m.DBTimeTotal = deltaExecTime / 1000.0 // в секунды
+		}
+		if deltaCalls > 0 {
+			m.AvgLatency = deltaExecTime / deltaCalls // ms
+		}
+
+		// Заполняем абсолютные счетчики (для отладки/инфо)
+		m.TotalCommits = endStats.XactCommit
+		m.TotalRollbacks = endStats.XactRollback
+		m.TotalCalls = endStats.TotalCalls
+	}
+
+	// ---------------------------------------------------------
+	// 5. Проверка на активность (EARLY EXIT)
+	// ---------------------------------------------------------
+	// Если за интервал времени не было выполнено ни одного запроса,
+	// то нет смысла анализировать дальше — это IDLE.
+	if m.DBTimeTotal <= 0 {
 		return m, nil
 	}
 
-	// Конвертируем сэмплы во время (предполагая, что сэмпл берется раз в 5 сек, но ASH хранит состояние. 
-	// Стандартный подход: ASH Count = Average Active Sessions (AAS).
-	// Чтобы получить "время", мы смотрим пропорции.
-	
-	m.DBTimeTotal = total
-	m.CPUTime = cpu
-	m.IOTime = io
-	m.LockTime = lock
-	
-	// DB Time Committed = Total - All Waits (упрощенно CPU Time - это время выполнения кода)
-	m.DBTimeCommitted = m.CPUTime 
+	// ========================================================================
+	// 6. Считаем пропорции нагрузки через ASH (pg_stat_activity)
+	// ========================================================================
+	queryASH := `
+        WITH ash_stats AS (
+            SELECT
+                count(*) as total_samples,
+                -- DB Time ASH (CPU): active без wait_event
+                count(*) FILTER (WHERE wait_event IS NULL) as cpu_samples,
+                
+                -- DB Time ASH (IO): конкретные ивенты чтения/записи файлов
+                count(*) FILTER (WHERE wait_event IN (
+                    'DataFileRead', 'DataFileWrite', 'DataFileExtend', 'DataFileTruncate',
+                    'WALWrite', 'WALSync' 
+                ) OR wait_event_type = 'IO') as io_samples,
+                
+                -- DB Time ASH (Lock): блокировки
+                count(*) FILTER (WHERE wait_event_type IN ('Lock', 'LWLock')) as lock_samples
+            FROM profile_metrics.ash_samples
+            WHERE sample_time >= NOW() - $1::interval
+        )
+        SELECT total_samples, cpu_samples, io_samples, lock_samples FROM ash_stats;
+    `
 
-	// Расчет процентов
-	m.CPUPercent = (m.CPUTime / m.DBTimeTotal) * 100
-	m.IOPercent = (m.IOTime / m.DBTimeTotal) * 100
-	m.LockPercent = (m.LockTime / m.DBTimeTotal) * 100
+	var totalSamples, cpuSamples, ioSamples, lockSamples float64
+	err = c.pool.QueryRow(ctx, queryASH, duration.String()).Scan(&totalSamples, &cpuSamples, &ioSamples, &lockSamples)
+	if err != nil {
+		return m, fmt.Errorf("failed to get ash stats: %w", err)
+	}
+
+	if totalSamples == 0 {
+		// Если ASH пуст, это означает, что база простаивает (нет активных запросов)
+		// В этом случае все метрики должны быть 0
+		m.DBTimeCommitted = 0
+		m.CPUTime = 0
+		m.IOTime = 0
+		m.LockTime = 0
+		m.CPUPercent = 0
+		m.IOPercent = 0
+		m.LockPercent = 0
+		return m, nil
+	}
+
+	// ========================================================================
+	// 7. Применяем формулы
+	// ========================================================================
+
+	// Вычисляем доли (percentages)
+	ratioCPU := cpuSamples / totalSamples
+	ratioIO := ioSamples / totalSamples
+	ratioLock := lockSamples / totalSamples
+
+	// Распределяем реальное время (DB Time Total) согласно пропорциям ASH
+	m.CPUTime = m.DBTimeTotal * ratioCPU
+	m.IOTime = m.DBTimeTotal * ratioIO
+	m.LockTime = m.DBTimeTotal * ratioLock
+
+	// Формула: DB Time Committed = DB Time - Wait Time
+	// Wait Time = IO + Lock + Other Waits
+	// Соответственно Committed ≈ CPU Time (чистое время выполнения)
+	m.DBTimeCommitted = m.CPUTime
+
+	// Проценты для вывода
+	m.CPUPercent = ratioCPU * 100
+	m.IOPercent = ratioIO * 100
+	m.LockPercent = ratioLock * 100
+
+	// Wasted DB Time - процент времени, потраченного на блокировки
+	if m.DBTimeTotal > 0 {
+		m.WastedDBTime = (m.LockTime / m.DBTimeTotal) * 100
+	} else {
+		m.WastedDBTime = 0
+	}
+
+	// Dominate DB Time - доминирующий тип времени (максимум из CPU/IO/Lock)
+	if m.CPUPercent >= m.IOPercent && m.CPUPercent >= m.LockPercent {
+		m.DominateDBTime = m.CPUPercent
+	} else if m.IOPercent >= m.LockPercent {
+		m.DominateDBTime = m.IOPercent
+	} else {
+		m.DominateDBTime = m.LockPercent
+	}
 
 	return m, nil
 }

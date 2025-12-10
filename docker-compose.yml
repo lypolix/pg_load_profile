@@ -28,16 +28,36 @@ services:
   backend:
     build: . # Указываем Docker собрать образ из текущей директории, используя Dockerfile
     container_name: go_profiler_backend
-    # depends_on гарантирует, что бэкенд запустится только после того, 
-    # как база данных будет готова (пройдет healthcheck)
+    # depends_on гарантирует, что бэкенд запустится только после того,
+    # как база данных и ML сервис будут готовы (пройдут healthcheck)
     depends_on:
       db:
+        condition: service_healthy
+      ml-service:
         condition: service_healthy
     # Передаем строку подключения через переменную окружения.
     # Обратите внимание: хост теперь 'db' (имя сервиса), а не 'localhost'.
     environment:
       - DATABASE_URL=postgres://profiler:secret@db:5432/testdb
+      - ML_SERVICE_URL=http://ml-service:8000
+    ports:
+      - "8081:8080"
     restart: on-failure
+
+  # Сервис для ML-модели
+  ml-service:
+    build:
+      context: ./ml
+      dockerfile: Dockerfile
+    container_name: ml_profiler_service
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
 networks:
   default:

@@ -3,3 +3,6 @@ bin/
 *.out
 .env
 vendor/
+
+
+frontend/node_modules/

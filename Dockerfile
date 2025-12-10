@@ -8,13 +8,16 @@ RUN go mod download
     
 COPY . .
     
-RUN CGO_ENABLED=0 GOOS=linux go build -o /profiler-app ./main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o /profiler-app ./cmd/server/main.go
     
 FROM alpine:latest
     
 WORKDIR /root/
+
+RUN apk add --no-cache postgresql-client
     
 COPY --from=builder /profiler-app .
+
+COPY scenarios ./scenarios
     
 CMD ["./profiler-app"]
-    

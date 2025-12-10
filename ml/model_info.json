@@ -1,0 +1,33 @@
+{
+  "feature_columns": [
+    "db_time_total",
+    "db_time_committed",
+    "cpu_time",
+    "io_time",
+    "lock_time",
+    "cpu_percent",
+    "io_percent",
+    "lock_percent",
+    "tps",
+    "qps",
+    "avg_query_latency_ms",
+    "rollback_rate",
+    "total_commits",
+    "total_rollbacks",
+    "total_calls",
+    "active_config"
+  ],
+  "categorical_features": [
+    "active_config"
+  ],
+  "class_names": [
+    "cold",
+    "etl",
+    "init",
+    "iot",
+    "locks",
+    "mixed",
+    "olap",
+    "oltp"
+  ]
+}
