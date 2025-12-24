@@ -22,7 +22,7 @@
   - `pg_locks` — информация о блокировках.
   - `pg_stat_database`, `pg_stat_io`, `pg_stat_bgwriter` — агрегированные статистики по времени, IO, чекпоинтам.
 - **Внешние диагностические утилиты**:
-  - `pg_top`, `pg_activity` (или аналоги) для визуального контроля CPU/IO/locks и текущих запросов.
+  - `pg_top`, `pg_activity` для визуального контроля CPU/IO/locks и текущих запросов.
 - **Собственный сервис (Go/Python)**:
   - HTTP API:
     - `/config/apply?preset=<profile>` — применить конфигурационный профиль (`oltp`, `olap`, `write_heavy`, `high_concurrency`, `reporting`, `etl`, `cold`, `mixed`).
